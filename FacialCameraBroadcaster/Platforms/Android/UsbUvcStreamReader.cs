@@ -43,28 +43,61 @@ namespace FacialCameraBroadcaster.Platforms.Android
 
         public bool IsRunning => _running;
 
+        /// <summary>The camera device this reader is using (for disconnect matching by VID/PID).</summary>
+        public UsbCameraDevice Camera => _camera;
+
         public UsbUvcStreamReader(UsbCameraDevice camera)
         {
             _camera = camera ?? throw new ArgumentNullException(nameof(camera));
         }
 
+        /// <summary>When StartAsync returns false, this describes why (for UI message).</summary>
+        public static string? LastOpenError { get; private set; }
+
+        private const int ClaimInterfaceRetries = 12;
+        private const int ClaimInterfaceRetryDelayMs = 5000;
+
         /// <summary>Opens the device, claims the video interface, and starts the read loop.</summary>
         public async Task<bool> StartAsync()
         {
+            LastOpenError = null;
+            Log.Info("UsbUvcStreamReader", $"StartAsync for {_camera.Device.DeviceName} (VID 0x{_camera.VendorId:X4} PID 0x{_camera.ProductId:X4})");
             var manager = (UsbManager)Application.Context.GetSystemService(global::Android.Content.Context.UsbService)!;
             _connection = manager.OpenDevice(_camera.Device);
             if (_connection == null)
             {
-                Log.Error("UsbUvcStreamReader", "OpenDevice failed");
+                LastOpenError = "USB permission denied or device not openable.";
+                Log.Error("UsbUvcStreamReader", $"OpenDevice failed for {_camera.Device.DeviceName} (VID 0x{_camera.VendorId:X4} PID 0x{_camera.ProductId:X4})");
                 return false;
             }
 
-            if (!_connection.ClaimInterface(_camera.VideoInterface, true))
+            for (int attempt = 1; attempt <= ClaimInterfaceRetries; attempt++)
             {
-                Log.Error("UsbUvcStreamReader", "ClaimInterface failed");
+                if (_connection.ClaimInterface(_camera.VideoInterface, true))
+                {
+                    Log.Info("UsbUvcStreamReader", $"ClaimInterface succeeded for {_camera.Device.DeviceName} (attempt {attempt})");
+                    break;
+                }
+
+                if (attempt == ClaimInterfaceRetries)
+                {
+                    LastOpenError = "Interface in use. Unplug the camera, wait a few seconds, tap Refresh, then try Start again.";
+                    Log.Error("UsbUvcStreamReader", $"ClaimInterface failed for {_camera.Device.DeviceName} after {attempt} attempt(s)");
+                    _connection.Close();
+                    _connection = null;
+                    return false;
+                }
+
+                Log.Info("UsbUvcStreamReader", $"ClaimInterface attempt {attempt} failed for {_camera.Device.DeviceName}, retrying in {ClaimInterfaceRetryDelayMs}ms...");
                 _connection.Close();
                 _connection = null;
-                return false;
+                await Task.Delay(ClaimInterfaceRetryDelayMs).ConfigureAwait(false);
+                _connection = manager.OpenDevice(_camera.Device);
+                if (_connection == null)
+                {
+                    LastOpenError = "USB permission denied or device not openable.";
+                    return false;
+                }
             }
 
             _frameBuffer = new byte[MaxFrameSize];
@@ -76,29 +109,94 @@ namespace FacialCameraBroadcaster.Platforms.Android
             return true;
         }
 
+        /// <summary>Normal stop: wait for read loop (it releases interface in its finally), then clear refs.</summary>
         public async Task StopAsync()
+        {
+            try
+            {
+                _running = false;
+                _cts?.Cancel();
+                if (_readTask != null)
+                {
+                    try { await _readTask.ConfigureAwait(false); }
+                    catch { }
+                }
+                // ReadLoop releases in its finally; only release here if we never started the loop
+                if (_connection != null)
+                {
+                    try { _connection.ReleaseInterface(_camera.VideoInterface); } catch { }
+                    try { _connection.Close(); } catch { }
+                }
+            }
+            catch { }
+            finally
+            {
+                _connection = null;
+                _readTask = null;
+            }
+        }
+
+        /// <summary>
+        /// Abandon the reader without blocking on Java/USB. Use when device was unplugged.
+        /// Tries to release the interface immediately (best chance before USB stack tears down),
+        /// then again after a delay so the interface can be reclaimed after replug.
+        /// </summary>
+        public void Abandon()
         {
             _running = false;
             _cts?.Cancel();
             if (_readTask != null)
-                await _readTask.ConfigureAwait(false);
-            _connection?.ReleaseInterface(_camera.VideoInterface);
-            _connection?.Close();
+                _readTask.ContinueWith(_ => { }, TaskContinuationOptions.OnlyOnFaulted);
+
+            var conn = _connection;
+            var cam = _camera;
             _connection = null;
             _readTask = null;
+
+            if (conn != null && cam != null)
+            {
+                // Release immediately so we free the interface before USB stack invalidates the connection
+                _ = Task.Run(() => TryReleaseConnection(conn, cam));
+                // Retry release after delay in case first run didn't execute or kernel was slow
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(4000).ConfigureAwait(false);
+                    TryReleaseConnection(conn, cam);
+                });
+            }
+        }
+
+        private static void TryReleaseConnection(UsbDeviceConnection conn, UsbCameraDevice cam)
+        {
+            try
+            {
+                conn.ReleaseInterface(cam.VideoInterface);
+                conn.Close();
+                Log.Info("UsbUvcStreamReader", $"Released interface and closed connection for {cam.Device.DeviceName}");
+            }
+            catch (Exception ex) { Log.Warn("UsbUvcStreamReader", $"Release/close failed: {ex.Message}"); }
         }
 
         private void ReadLoop(CancellationToken ct)
         {
-            var endpoint = _camera.VideoEndpoint;
+            UsbEndpoint? endpoint = null;
+            try { endpoint = _camera.VideoEndpoint; } catch { return; }
+            if (endpoint == null) return;
+
+            var conn = _connection;
+            var cam = _camera;
+            if (conn == null || cam == null) return;
+
             var accumulator = new List<byte>(MaxFrameSize);
-            int frameStart = -1; // index in accumulator of SOI
+            int frameStart = -1;
 
             try
             {
                 while (_running && !ct.IsCancellationRequested && _connection != null)
                 {
-                    int len = _connection.BulkTransfer(endpoint, _readBuffer, _readBuffer.Length, 500);
+                    int len = 0;
+                    try { len = _connection.BulkTransfer(endpoint, _readBuffer, _readBuffer.Length, 500); }
+                    catch { break; /* device unplugged */ }
                     if (len <= 0)
                         continue;
 
@@ -168,6 +266,10 @@ namespace FacialCameraBroadcaster.Platforms.Android
             catch (Exception ex)
             {
                 Log.Error("UsbUvcStreamReader", $"ReadLoop error: {ex.Message}");
+            }
+            finally
+            {
+                TryReleaseConnection(conn, cam);
             }
         }
     }

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Match any USB device so the app can be offered when any USB device is attached.
+     When the user selects this app, they can check "Use by default for this USB device"
+     so Android opens the app automatically next time without asking. -->
+<resources>
+    <usb-device vendor-id="-1" product-id="-1" />
+</resources>

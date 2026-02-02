@@ -4,6 +4,7 @@ using Android.Hardware.Usb;
 using Android.OS;
 using Android.Util;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Application = Android.App.Application;
 
@@ -15,16 +16,22 @@ namespace FacialCameraBroadcaster.Platforms.Android
         public UsbInterface VideoInterface { get; init; }
         public UsbEndpoint VideoEndpoint { get; init; }
 
+        /// <summary>Stored at creation so we can match after detach without touching the Java UsbDevice.</summary>
+        public int VendorId { get; init; }
+        /// <summary>Stored at creation so we can match after detach without touching the Java UsbDevice.</summary>
+        public int ProductId { get; init; }
+
         public string DeviceName => Device.DeviceName;
 
         public override string ToString() =>
-            $"USB Camera: {DeviceName}, VID:0x{Device.VendorId:X4}, PID:0x{Device.ProductId:X4}";
+            $"USB Camera: {DeviceName}, VID:0x{VendorId:X4}, PID:0x{ProductId:X4}";
     }
 
     public class UsbCameraEnumerator
     {
         private const string UsbPermissionAction = "com.FacialCameraBroadcaster.USB_PERMISSION";
         private readonly UsbManager usbManager;
+        private static readonly SemaphoreSlim _enumLock = new(1, 1);
 
         public UsbCameraEnumerator()
         {
@@ -40,9 +47,23 @@ namespace FacialCameraBroadcaster.Platforms.Android
         }
 
         /// <summary>
-        /// Enumerates all connected USB cameras with UVC VideoStreaming interfaces
+        /// Enumerates all connected USB cameras with UVC VideoStreaming interfaces.
+        /// Only one enumeration runs at a time to avoid permission dialog races and timeouts.
         /// </summary>
         public async Task<List<UsbCameraDevice>> EnumerateCamerasAsync()
+        {
+            await _enumLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                return await EnumerateCamerasCoreAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                _enumLock.Release();
+            }
+        }
+
+        private async Task<List<UsbCameraDevice>> EnumerateCamerasCoreAsync()
         {
             var cameras = new List<UsbCameraDevice>();
             int deviceCount = usbManager.DeviceList?.Count ?? 0;
@@ -77,7 +98,9 @@ namespace FacialCameraBroadcaster.Platforms.Android
                     {
                         Device = device,
                         VideoInterface = uvcInterface,
-                        VideoEndpoint = endpoint
+                        VideoEndpoint = endpoint,
+                        VendorId = device.VendorId,
+                        ProductId = device.ProductId
                     });
                     Log.Info(Tag, $"  Added camera: {device.DeviceName}");
                 }
@@ -160,8 +183,9 @@ namespace FacialCameraBroadcaster.Platforms.Android
                 return false;
             }
 
+            string devicePath = device.DeviceName;
             var tcs = new TaskCompletionSource<bool>();
-            var receiver = new PermissionReceiver(tcs);
+            var receiver = new PermissionReceiver(devicePath, tcs);
             var filter = new IntentFilter(UsbPermissionAction);
             if ((int)global::Android.OS.Build.VERSION.SdkInt >= 33)
                 context.RegisterReceiver(receiver, filter, global::Android.Content.ReceiverFlags.NotExported);
@@ -177,8 +201,8 @@ namespace FacialCameraBroadcaster.Platforms.Android
 
             usbManager.RequestPermission(device, pending);
 
-            // Timeout after 15s in case the permission broadcast never arrives
-            var timeout = Task.Delay(15000);
+            // Timeout after 8s so reconnect can retry sooner; second enumeration often gets HasPermission
+            var timeout = Task.Delay(8000);
             var completed = await Task.WhenAny(tcs.Task, timeout);
             try { context.UnregisterReceiver(receiver); } catch { }
 
@@ -193,13 +217,13 @@ namespace FacialCameraBroadcaster.Platforms.Android
 
         private class PermissionReceiver : BroadcastReceiver
         {
-            private readonly TaskCompletionSource<bool> tcs;
-            public PermissionReceiver()
+            private readonly string _requestedDevicePath;
+            private readonly TaskCompletionSource<bool> _tcs;
+
+            public PermissionReceiver(string requestedDevicePath, TaskCompletionSource<bool> tcs)
             {
-            }
-            public PermissionReceiver(TaskCompletionSource<bool> tcs)
-            {
-                this.tcs = tcs;
+                _requestedDevicePath = requestedDevicePath;
+                _tcs = tcs;
             }
 
             public override void OnReceive(Context context, Intent intent)
@@ -209,8 +233,11 @@ namespace FacialCameraBroadcaster.Platforms.Android
 
                 UsbDevice? device = (UsbDevice?)intent.GetParcelableExtra(UsbManager.ExtraDevice);
                 bool granted = intent.GetBooleanExtra(UsbManager.ExtraPermissionGranted, false);
-                Log.Info(Tag, $"Permission result for {device?.DeviceName}: {granted}");
-                tcs.TrySetResult(granted);
+                string? path = device?.DeviceName;
+                if (path != _requestedDevicePath)
+                    return;
+                Log.Info(Tag, $"Permission result for {path}: {granted}");
+                _tcs.TrySetResult(granted);
             }
         }
     }

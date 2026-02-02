@@ -91,18 +91,27 @@ namespace FacialCameraBroadcaster.Services
                 stream.Flush();
 
                 byte[]? lastFrame = null;
+                long lastResendMs = 0;
+                const int resendIntervalMs = 1000; // Re-send last frame every 1s when frozen so stream stays alive
                 while (_running && client.Connected)
                 {
-                    byte[]? frame = _getLatestFrame();
-                    if (frame != null && frame.Length > 0 && (lastFrame == null || frame.Length != lastFrame.Length || !frame.AsSpan().SequenceEqual(lastFrame)))
+                    byte[]? frame = null;
+                    try { frame = _getLatestFrame(); } catch { /* keep lastFrame, server never dies */ }
+                    bool isNew = frame != null && frame.Length > 0 && (lastFrame == null || frame.Length != lastFrame.Length || !frame.AsSpan().SequenceEqual(lastFrame));
+                    if (isNew)
                     {
                         lastFrame = frame;
-                        string partHeader = "--" + boundary + "\r\nContent-Type: image/jpeg\r\nContent-Length: " + frame.Length + "\r\n\r\n";
-                        byte[] partHeaderBytes = Encoding.ASCII.GetBytes(partHeader);
-                        stream.Write(partHeaderBytes, 0, partHeaderBytes.Length);
-                        stream.Write(frame, 0, frame.Length);
-                        stream.Write(Encoding.ASCII.GetBytes("\r\n"), 0, 2);
-                        stream.Flush();
+                        lastResendMs = Environment.TickCount64;
+                        WriteFrame(stream, boundary, frame!);
+                    }
+                    else if (lastFrame != null && lastFrame.Length > 0)
+                    {
+                        long now = Environment.TickCount64;
+                        if (now - lastResendMs >= resendIntervalMs)
+                        {
+                            lastResendMs = now;
+                            try { WriteFrame(stream, boundary, lastFrame); } catch { /* client may have disconnected */ }
+                        }
                     }
                     Thread.Sleep(33); // ~30 fps max
                 }
@@ -112,6 +121,16 @@ namespace FacialCameraBroadcaster.Services
             {
                 try { client.Close(); } catch { }
             }
+        }
+
+        private static void WriteFrame(NetworkStream stream, string boundary, byte[] frame)
+        {
+            string partHeader = "--" + boundary + "\r\nContent-Type: image/jpeg\r\nContent-Length: " + frame.Length + "\r\n\r\n";
+            byte[] partHeaderBytes = Encoding.ASCII.GetBytes(partHeader);
+            stream.Write(partHeaderBytes, 0, partHeaderBytes.Length);
+            stream.Write(frame, 0, frame.Length);
+            stream.Write(Encoding.ASCII.GetBytes("\r\n"), 0, 2);
+            stream.Flush();
         }
     }
 }

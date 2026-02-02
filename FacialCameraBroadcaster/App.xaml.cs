@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FacialCameraBroadcaster
 {
@@ -7,6 +7,11 @@ namespace FacialCameraBroadcaster
         public App()
         {
             InitializeComponent();
+            TaskScheduler.UnobservedTaskException += (_, e) =>
+            {
+                System.Diagnostics.Debug.WriteLine($"UnobservedTaskException: {e.Exception}");
+                e.SetObserved();
+            };
         }
 
         protected override Window CreateWindow(IActivationState? activationState)

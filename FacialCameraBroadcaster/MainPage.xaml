@@ -13,7 +13,7 @@
                 FontAttributes="Bold"
                 HorizontalOptions="Center" />
 
-            <Label x:Name="StreamInfoLabel" Text="Select a camera and tap Start to broadcast MJPEG. View streams in a browser on the same network."
+            <Label x:Name="StreamInfoLabel" Text="Select a camera to start streaming automatically. View streams in a browser on the same network."
                    FontSize="12" TextColor="Gray" />
 
             <Button x:Name="RefreshCamerasButton" Text="Refresh camera list" Clicked="OnRefreshCamerasClicked" />
@@ -21,8 +21,8 @@
             <!-- LEFT EYE -->
             <Frame BorderColor="Gray" CornerRadius="8">
                 <VerticalStackLayout Spacing="10">
-                    <Label Text="Left Eye Camera" FontAttributes="Bold" />
-                    <Picker Title="Select USB Camera" x:Name="LeftEyeCameraPicker" TextColor="Black" />
+                    <Label Text="Left Eye Camera" FontAttributes="Bold" FontSize="16" TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource Gray900}}" />
+                    <Picker Title="Select USB Camera" x:Name="LeftEyeCameraPicker" TextColor="Black" SelectedIndexChanged="OnLeftEyePickerSelected" />
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
                         <Button x:Name="LeftEyeStartButton" Text="Start" Clicked="OnStartLeftEyeClicked" />
                         <Button x:Name="LeftEyeStopButton" Text="Stop" Clicked="OnStopLeftEyeClicked" Grid.Column="1" IsEnabled="False" />
@@ -40,8 +40,8 @@
             <!-- RIGHT EYE -->
             <Frame BorderColor="Gray" CornerRadius="8">
                 <VerticalStackLayout Spacing="10">
-                    <Label Text="Right Eye Camera" FontAttributes="Bold" />
-                    <Picker Title="Select USB Camera" x:Name="RightEyeCameraPicker" TextColor="Black" />
+                    <Label Text="Right Eye Camera" FontAttributes="Bold" FontSize="16" TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource Gray900}}" />
+                    <Picker Title="Select USB Camera" x:Name="RightEyeCameraPicker" TextColor="Black" SelectedIndexChanged="OnRightEyePickerSelected" />
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
                         <Button x:Name="RightEyeStartButton" Text="Start" Clicked="OnStartRightEyeClicked" />
                         <Button x:Name="RightEyeStopButton" Text="Stop" Clicked="OnStopRightEyeClicked" Grid.Column="1" IsEnabled="False" />
@@ -59,8 +59,8 @@
             <!-- MOUTH -->
             <Frame BorderColor="Gray" CornerRadius="8">
                 <VerticalStackLayout Spacing="10">
-                    <Label Text="Mouth Camera" FontAttributes="Bold" />
-                    <Picker Title="Select USB Camera" x:Name="MouthCameraPicker" TextColor="Black" />
+                    <Label Text="Mouth Camera" FontAttributes="Bold" FontSize="16" TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource Gray900}}" />
+                    <Picker Title="Select USB Camera" x:Name="MouthCameraPicker" TextColor="Black" SelectedIndexChanged="OnMouthPickerSelected" />
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
                         <Button x:Name="MouthStartButton" Text="Start" Clicked="OnStartMouthClicked" />
                         <Button x:Name="MouthStopButton" Text="Stop" Clicked="OnStopMouthClicked" Grid.Column="1" IsEnabled="False" />

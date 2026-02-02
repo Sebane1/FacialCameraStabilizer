@@ -9,19 +9,32 @@ namespace FacialCameraBroadcaster.Platforms.Android
     [IntentFilter(new[] { UsbManager.ActionUsbDeviceAttached, UsbManager.ActionUsbDeviceDetached })]
     public class UsbCameraBroadcastReceiver : BroadcastReceiver
     {
-        public static event Action<UsbDevice>? UsbDeviceChanged;
+        /// <param name="vendorId">Device VendorId (captured immediately so parcelable can be recycled).</param>
+        /// <param name="productId">Device ProductId.</param>
+        /// <param name="isAttached">True when device was attached, false when detached.</param>
+        public static event Action<int, int, bool>? UsbDeviceChanged;
 
         public override void OnReceive(Context context, Intent intent)
         {
             var action = intent.Action;
-            var device = (UsbDevice)intent.GetParcelableExtra(UsbManager.ExtraDevice);
+            var device = (UsbDevice?)intent.GetParcelableExtra(UsbManager.ExtraDevice);
 
             if (device == null)
+                return;
+
+            int vid, pid;
+            try
+            {
+                vid = device.VendorId;
+                pid = device.ProductId;
+            }
+            catch
             {
                 return;
             }
 
-            UsbDeviceChanged?.Invoke(device);
+            bool isAttached = action == UsbManager.ActionUsbDeviceAttached;
+            UsbDeviceChanged?.Invoke(vid, pid, isAttached);
         }
     }
 }

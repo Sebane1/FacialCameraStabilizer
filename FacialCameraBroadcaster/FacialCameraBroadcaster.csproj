@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
 		<TargetFrameworks>net10.0-android</TargetFrameworks>
 		<OutputType>Exe</OutputType>
@@ -22,6 +22,11 @@
 	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net10.0-android|AnyCPU'">
 		<ApplicationVersion>1</ApplicationVersion>
 		<ApplicationDisplayVersion>0.1</ApplicationDisplayVersion>
+		<AndroidKeyStore>true</AndroidKeyStore>
+		<AndroidSigningKeyAlias>Android</AndroidSigningKeyAlias>
+		<AndroidSigningKeyStore>$(MSBuildProjectDirectory)\android-keystore\FacialCameraBroadcaster.keystore</AndroidSigningKeyStore>
+		<AndroidSigningKeyStorePassword>880bc464-2610-4239-b938-c466a57b41eb</AndroidSigningKeyStorePassword>
+		<AndroidSigningKeyPassword>880bc464-2610-4239-b938-c466a57b41eb</AndroidSigningKeyPassword>
 	</PropertyGroup>
 
 	<ItemGroup>
