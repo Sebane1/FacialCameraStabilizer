@@ -1,4 +1,6 @@
+using Microsoft.Maui.ApplicationModel;
 using Microsoft.Maui.Controls;
+using Microsoft.Maui.Storage;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -28,6 +30,10 @@ namespace FacialCameraBroadcaster
         private const int PortLeftEye = 8080;
         private const int PortRightEye = 8081;
         private const int PortMouth = 8082;
+
+        private const string PrefLeftEye = "FacialCamera_LeftEye";
+        private const string PrefRightEye = "FacialCamera_RightEye";
+        private const string PrefMouth = "FacialCamera_Mouth";
 
         private IDispatcherTimer? _previewTimer;
         private int _lastLeftFrameLen, _lastRightFrameLen, _lastMouthFrameLen;
@@ -178,6 +184,10 @@ namespace FacialCameraBroadcaster
                 MouthCameraPicker.ItemDisplayBinding =
                     new Binding(nameof(UsbCameraDevice.DeviceName));
 
+            RestoreSavedSelection();
+            await Task.Delay(400);
+            await TryAutoStartSavedAsync();
+
             int connected = enumerator!.GetConnectedDeviceCount();
             if (cameras.Count == 0)
                 StreamInfoLabel.Text = connected == 0
@@ -185,6 +195,53 @@ namespace FacialCameraBroadcaster
                     : $"USB devices connected: {connected}, but none matched as camera. Tap Refresh again and allow access when prompted. Check logcat tag 'UsbCameraEnumerator' for details.";
             else
                 StreamInfoLabel.Text = "Select a camera and tap Start to broadcast MJPEG. View streams in a browser on the same network.";
+        }
+
+        private static string GetDeviceId(UsbCameraDevice cam)
+        {
+            return $"{cam.Device.VendorId:X4}_{cam.Device.ProductId:X4}_{cam.Device.DeviceName}";
+        }
+
+        private static UsbCameraDevice? FindMatchingCamera(List<UsbCameraDevice> list, string? savedId)
+        {
+            if (string.IsNullOrEmpty(savedId) || list.Count == 0) return null;
+            var exact = list.FirstOrDefault(c => GetDeviceId(c) == savedId);
+            if (exact != null) return exact;
+            var parts = savedId.Split('_');
+            if (parts.Length >= 2 && int.TryParse(parts[0], System.Globalization.NumberStyles.HexNumber, null, out int vid) && int.TryParse(parts[1], System.Globalization.NumberStyles.HexNumber, null, out int pid))
+                return list.FirstOrDefault(c => c.Device.VendorId == vid && c.Device.ProductId == pid);
+            return null;
+        }
+
+        private void RestoreSavedSelection()
+        {
+            var left = FindMatchingCamera(cameras, Preferences.Get(PrefLeftEye, null));
+            var right = FindMatchingCamera(cameras, Preferences.Get(PrefRightEye, null));
+            var mouth = FindMatchingCamera(cameras, Preferences.Get(PrefMouth, null));
+            if (left != null) LeftEyeCameraPicker.SelectedItem = left;
+            if (right != null) RightEyeCameraPicker.SelectedItem = right;
+            if (mouth != null) MouthCameraPicker.SelectedItem = mouth;
+        }
+
+        private async Task TryAutoStartSavedAsync()
+        {
+            string? leftId = Preferences.Get(PrefLeftEye, null);
+            string? rightId = Preferences.Get(PrefRightEye, null);
+            string? mouthId = Preferences.Get(PrefMouth, null);
+
+            if (leftEyeReader == null && leftId != null && LeftEyeCameraPicker.SelectedItem is UsbCameraDevice leftCam && (GetDeviceId(leftCam) == leftId || DeviceIdVidPidMatch(GetDeviceId(leftCam), leftId)))
+                await StartCameraAsync("Left Eye", LeftEyeCameraPicker, PortLeftEye, r => { leftEyeReader = r; }, s => { leftEyeServer = s; }, SetStreamState);
+            if (rightEyeReader == null && rightId != null && RightEyeCameraPicker.SelectedItem is UsbCameraDevice rightCam && (GetDeviceId(rightCam) == rightId || DeviceIdVidPidMatch(GetDeviceId(rightCam), rightId)))
+                await StartCameraAsync("Right Eye", RightEyeCameraPicker, PortRightEye, r => { rightEyeReader = r; }, s => { rightEyeServer = s; }, SetStreamState);
+            if (mouthReader == null && mouthId != null && MouthCameraPicker.SelectedItem is UsbCameraDevice mouthCam && (GetDeviceId(mouthCam) == mouthId || DeviceIdVidPidMatch(GetDeviceId(mouthCam), mouthId)))
+                await StartCameraAsync("Mouth", MouthCameraPicker, PortMouth, r => { mouthReader = r; }, s => { mouthServer = s; }, SetStreamState);
+        }
+
+        private static bool DeviceIdVidPidMatch(string currentId, string savedId)
+        {
+            var cur = currentId.Split('_');
+            var sav = savedId.Split('_');
+            return cur.Length >= 2 && sav.Length >= 2 && cur[0] == sav[0] && cur[1] == sav[1];
         }
 
         private static string GetLocalIpAddress()
@@ -271,6 +328,12 @@ namespace FacialCameraBroadcaster
             setReader(reader);
             setServer(server);
             setStreamState(slot, true, port);
+
+            if (slot == "Left Eye") Preferences.Set(PrefLeftEye, GetDeviceId(cam));
+            else if (slot == "Right Eye") Preferences.Set(PrefRightEye, GetDeviceId(cam));
+            else if (slot == "Mouth") Preferences.Set(PrefMouth, GetDeviceId(cam));
+
+            StartStreamingServiceIfNeeded();
         }
 
         private async Task StopCameraAsync(string slot, int port,
@@ -283,6 +346,27 @@ namespace FacialCameraBroadcaster
             if (server != null) await server.StopAsync();
             clearRefs();
             setStreamState(slot, false, port);
+            StopStreamingServiceIfIdle();
+        }
+
+        private async void StartStreamingServiceIfNeeded()
+        {
+            if (leftEyeReader == null && rightEyeReader == null && mouthReader == null)
+                return;
+            if (await Permissions.RequestAsync<Permissions.PostNotifications>() != PermissionStatus.Granted)
+            { }
+            var context = Microsoft.Maui.ApplicationModel.Platform.CurrentActivity as global::Android.Content.Context;
+            if (context != null)
+                StreamingForegroundService.Start(context);
+        }
+
+        private void StopStreamingServiceIfIdle()
+        {
+            if (leftEyeReader != null || rightEyeReader != null || mouthReader != null)
+                return;
+            var context = Microsoft.Maui.ApplicationModel.Platform.CurrentActivity as global::Android.Content.Context;
+            if (context != null)
+                StreamingForegroundService.Stop(context);
         }
     }
 }
