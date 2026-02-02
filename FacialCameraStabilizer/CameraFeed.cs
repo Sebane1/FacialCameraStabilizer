@@ -66,7 +66,7 @@ public class CameraFeed
         {
             while (ctx.Response.OutputStream.CanWrite)
             {
-                Thread.Sleep(1000);
+                Thread.Sleep(100);
             }
         }
         catch { }
@@ -79,9 +79,9 @@ public class CameraFeed
 
     async Task Esp32ReaderLoop()
     {
-        const int reconnectDelayMs = 2000;
-        const int stallTimeoutMs = 5000;
-        const int watchdogIntervalMs = 250;
+        const int reconnectDelayMs = 10;
+        const int stallTimeoutMs = 50;
+        const int watchdogIntervalMs = 40;
 
         while (true)
         {

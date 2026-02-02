@@ -1,0 +1,88 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="FacialCameraBroadcaster.MainPage"
+             Title="USB Camera Broadcaster">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="20" Spacing="24">
+
+            <Label
+                Text="Facial Camera Broadcaster"
+                FontSize="24"
+                FontAttributes="Bold"
+                HorizontalOptions="Center" />
+
+            <!-- LEFT EYE -->
+            <Frame BorderColor="Gray" CornerRadius="8">
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Left Eye Camera" FontAttributes="Bold" />
+
+                    <Picker
+                        Title="Select USB Camera"
+                        x:Name="LeftEyeCameraPicker" />
+
+                    <Picker
+                        Title="Select Interface"
+                        x:Name="LeftEyeInterfacePicker" />
+
+                    <Picker
+                        Title="Select Endpoint"
+                        x:Name="LeftEyeEndpointPicker" />
+
+                    <Button
+                        Text="Start Left Eye"
+                        Clicked="OnStartLeftEyeClicked" />
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- RIGHT EYE -->
+            <Frame BorderColor="Gray" CornerRadius="8">
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Right Eye Camera" FontAttributes="Bold" />
+
+                    <Picker
+                        Title="Select USB Camera"
+                        x:Name="RightEyeCameraPicker" />
+
+                    <Picker
+                        Title="Select Interface"
+                        x:Name="RightEyeInterfacePicker" />
+
+                    <Picker
+                        Title="Select Endpoint"
+                        x:Name="RightEyeEndpointPicker" />
+
+                    <Button
+                        Text="Start Right Eye"
+                        Clicked="OnStartRightEyeClicked" />
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- MOUTH -->
+            <Frame BorderColor="Gray" CornerRadius="8">
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Mouth Camera" FontAttributes="Bold" />
+
+                    <Picker
+                        Title="Select USB Camera"
+                        x:Name="MouthCameraPicker" />
+
+                    <Picker
+                        Title="Select Interface"
+                        x:Name="MouthInterfacePicker" />
+
+                    <Picker
+                        Title="Select Endpoint"
+                        x:Name="MouthEndpointPicker" />
+
+                    <Button
+                        Text="Start Mouth"
+                        Clicked="OnStartMouthClicked" />
+                </VerticalStackLayout>
+            </Frame>
+
+        </VerticalStackLayout>
+    </ScrollView>
+
+</ContentPage>
