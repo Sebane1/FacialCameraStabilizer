@@ -1,5 +1,5 @@
-﻿using Android.App;
-using Android.Content;
+using Android.App;
+using global::Android.Content;
 using Android.Hardware.Usb;
 using Android.OS;
 using Android.Util;
@@ -31,40 +31,63 @@ namespace FacialCameraBroadcaster.Platforms.Android
             usbManager = (UsbManager)Application.Context.GetSystemService(Context.UsbService);
         }
 
+        private const string Tag = "UsbCameraEnumerator";
+
+        /// <summary>Number of USB devices currently in UsbManager.DeviceList (before any filtering).</summary>
+        public int GetConnectedDeviceCount()
+        {
+            return usbManager.DeviceList?.Count ?? 0;
+        }
+
         /// <summary>
         /// Enumerates all connected USB cameras with UVC VideoStreaming interfaces
         /// </summary>
         public async Task<List<UsbCameraDevice>> EnumerateCamerasAsync()
         {
             var cameras = new List<UsbCameraDevice>();
+            int deviceCount = usbManager.DeviceList?.Count ?? 0;
+            Log.Info(Tag, $"USB devices in list: {deviceCount}");
 
-            foreach (var entry in usbManager.DeviceList)
+            if (deviceCount == 0)
+                return cameras;
+
+            foreach (var entry in usbManager.DeviceList!)
             {
                 var device = entry.Value;
+                Log.Info(Tag, $"Device: {device.DeviceName} VID=0x{device.VendorId:X4} PID=0x{device.ProductId:X4} interfaces={device.InterfaceCount}");
+
                 var uvcInterface = FindVideoStreamingInterface(device);
-                if (uvcInterface != null)
+                if (uvcInterface == null)
                 {
-                    var endpoint = FindBulkInEndpoint(uvcInterface);
-                    if (endpoint != null)
+                    Log.Warn(Tag, $"  No video interface found for {device.DeviceName}");
+                    continue;
+                }
+
+                var endpoint = FindBulkInEndpoint(uvcInterface);
+                if (endpoint == null)
+                {
+                    Log.Warn(Tag, $"  No IN endpoint found on interface for {device.DeviceName}");
+                    continue;
+                }
+
+                bool permission = await RequestPermissionAsync(device);
+                if (permission)
+                {
+                    cameras.Add(new UsbCameraDevice
                     {
-                        bool permission = await RequestPermissionAsync(device);
-                        if (permission)
-                        {
-                            cameras.Add(new UsbCameraDevice
-                            {
-                                Device = device,
-                                VideoInterface = uvcInterface,
-                                VideoEndpoint = endpoint
-                            });
-                        }
-                        else
-                        {
-                            Log.Warn("UsbCameraEnumerator", $"Permission denied for {device.DeviceName}");
-                        }
-                    }
+                        Device = device,
+                        VideoInterface = uvcInterface,
+                        VideoEndpoint = endpoint
+                    });
+                    Log.Info(Tag, $"  Added camera: {device.DeviceName}");
+                }
+                else
+                {
+                    Log.Warn(Tag, $"  Permission denied or timeout for {device.DeviceName}");
                 }
             }
 
+            Log.Info(Tag, $"Enumerate done: {cameras.Count} camera(s)");
             return cameras;
         }
 
@@ -73,11 +96,24 @@ namespace FacialCameraBroadcaster.Platforms.Android
             for (int i = 0; i < device.InterfaceCount; i++)
             {
                 var intf = device.GetInterface(i);
-                // VideoStreaming: Class 0x0E, Subclass 0x02
-                //if ((int)intf.InterfaceClass == 0x0E && (int)intf.InterfaceSubclass == 0x02)
-                //{
+                // VideoStreaming: Class 0x0E, Subclass 0x02 (optional: some devices use different class)
+                if ((int)intf.InterfaceClass == 0x0E && (int)intf.InterfaceSubclass == 0x02)
                     return intf;
-                //}
+            }
+            // Fallback: use first interface with a video-capable IN endpoint, skipping CDC/serial (0x02)
+            for (int i = 0; i < device.InterfaceCount; i++)
+            {
+                var intf = device.GetInterface(i);
+                if ((int)intf.InterfaceClass == 0x02) continue; // skip CDC
+                if (FindBulkInEndpoint(intf) != null)
+                    return intf;
+            }
+            // Last resort: any interface with any IN endpoint (e.g. non-standard UVC)
+            for (int i = 0; i < device.InterfaceCount; i++)
+            {
+                var intf = device.GetInterface(i);
+                if (FindBulkInEndpoint(intf) != null)
+                    return intf;
             }
             return null;
         }
@@ -87,39 +123,71 @@ namespace FacialCameraBroadcaster.Platforms.Android
             for (int e = 0; e < intf.EndpointCount; e++)
             {
                 var ep = intf.GetEndpoint(e);
-
+                // IN = device-to-host (bit 7 of address, or Direction == DirMask)
                 bool isIn = ep.Direction == UsbAddressing.DirMask;
+                if (!isIn) continue;
 
-                bool isBulk = ep.Type == UsbAddressing.XferInterrupt;
-
-                if (isIn && isBulk)
+                // Prefer interrupt (OpenIris) or bulk; accept any IN endpoint as last resort
+                const int UsbEndpointXferBulk = 2;
+                bool knownVideo = ep.Type == UsbAddressing.XferInterrupt
+                    || (int)ep.Type == UsbEndpointXferBulk;
+                if (knownVideo)
+                    return ep;
+            }
+            // Last resort: any IN endpoint (e.g. isochronous)
+            for (int e = 0; e < intf.EndpointCount; e++)
+            {
+                var ep = intf.GetEndpoint(e);
+                if (ep.Direction == UsbAddressing.DirMask)
                     return ep;
             }
             return null;
         }
 
 
-        private Task<bool> RequestPermissionAsync(UsbDevice device)
+        private async Task<bool> RequestPermissionAsync(UsbDevice device)
         {
-            var tcs = new TaskCompletionSource<bool>();
+            if (usbManager.HasPermission(device))
+            {
+                Log.Info(Tag, $"Already have permission for {device.DeviceName}");
+                return true;
+            }
 
-            // Use MAUI's current Activity instead of Application.Context
             var context = Microsoft.Maui.ApplicationModel.Platform.CurrentActivity;
+            if (context == null)
+            {
+                Log.Warn(Tag, "CurrentActivity is null; cannot request USB permission.");
+                return false;
+            }
 
+            var tcs = new TaskCompletionSource<bool>();
             var receiver = new PermissionReceiver(tcs);
             var filter = new IntentFilter(UsbPermissionAction);
-            context.RegisterReceiver(receiver, filter);
+            if ((int)global::Android.OS.Build.VERSION.SdkInt >= 33)
+                context.RegisterReceiver(receiver, filter, global::Android.Content.ReceiverFlags.NotExported);
+            else
+                context.RegisterReceiver(receiver, filter);
 
-            var intent = PendingIntent.GetBroadcast(
+            var pending = PendingIntent.GetBroadcast(
                 context,
                 0,
                 new Intent(UsbPermissionAction),
                 PendingIntentFlags.Immutable
             );
 
-            usbManager.RequestPermission(device, intent);
+            usbManager.RequestPermission(device, pending);
 
-            return tcs.Task;
+            // Timeout after 15s in case the permission broadcast never arrives
+            var timeout = Task.Delay(15000);
+            var completed = await Task.WhenAny(tcs.Task, timeout);
+            try { context.UnregisterReceiver(receiver); } catch { }
+
+            if (completed == timeout)
+            {
+                Log.Warn(Tag, $"Permission timeout for {device.DeviceName}");
+                return false;
+            }
+            return await tcs.Task;
         }
 
 
@@ -139,22 +207,10 @@ namespace FacialCameraBroadcaster.Platforms.Android
                 if (intent.Action != UsbPermissionAction)
                     return;
 
-                UsbDevice device = (UsbDevice)intent.GetParcelableExtra(UsbManager.ExtraDevice);
+                UsbDevice? device = (UsbDevice?)intent.GetParcelableExtra(UsbManager.ExtraDevice);
                 bool granted = intent.GetBooleanExtra(UsbManager.ExtraPermissionGranted, false);
-                Log.Info("UsbCameraEnumerator", $"Permission result for {device?.DeviceName}: {granted}");
-
-                // Complete the task
+                Log.Info(Tag, $"Permission result for {device?.DeviceName}: {granted}");
                 tcs.TrySetResult(granted);
-
-                // Unregister receiver immediately
-                try
-                {
-                    context.UnregisterReceiver(this);
-                }
-                catch (Exception ex)
-                {
-                    Log.Warn("UsbCameraEnumerator", $"Failed to unregister receiver: {ex}");
-                }
             }
         }
     }

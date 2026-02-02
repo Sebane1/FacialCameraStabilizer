@@ -1,12 +1,12 @@
-﻿using Android.App;
-using Android.Content;
+using Android.App;
+using global::Android.Content;
 using Android.Hardware.Usb;
 using Android.Util;
 
 namespace FacialCameraBroadcaster.Platforms.Android
 {
-    //[BroadcastReceiver(Enabled = true, Exported = true)]
-    //[IntentFilter(new[] { UsbManager.ActionUsbDeviceAttached, UsbManager.ActionUsbDeviceDetached })]
+    [BroadcastReceiver(Enabled = true, Exported = true)]
+    [IntentFilter(new[] { UsbManager.ActionUsbDeviceAttached, UsbManager.ActionUsbDeviceDetached })]
     public class UsbCameraBroadcastReceiver : BroadcastReceiver
     {
         public static event Action<UsbDevice>? UsbDeviceChanged;
