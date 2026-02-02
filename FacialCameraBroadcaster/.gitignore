@@ -1,0 +1,11 @@
+# Android release keystore (run create-android-keystore.ps1 to generate)
+android-keystore/
+
+# User-specific / secrets
+*.csproj.user
+*.user
+
+# Build / IDE
+bin/
+obj/
+.vs/
