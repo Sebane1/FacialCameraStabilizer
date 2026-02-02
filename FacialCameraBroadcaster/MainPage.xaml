@@ -22,11 +22,17 @@
             <Frame BorderColor="Gray" CornerRadius="8">
                 <VerticalStackLayout Spacing="10">
                     <Label Text="Left Eye Camera" FontAttributes="Bold" />
-                    <Picker Title="Select USB Camera" x:Name="LeftEyeCameraPicker" />
+                    <Picker Title="Select USB Camera" x:Name="LeftEyeCameraPicker" TextColor="Black" />
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
                         <Button x:Name="LeftEyeStartButton" Text="Start" Clicked="OnStartLeftEyeClicked" />
                         <Button x:Name="LeftEyeStopButton" Text="Stop" Clicked="OnStopLeftEyeClicked" Grid.Column="1" IsEnabled="False" />
                     </Grid>
+                    <Frame BorderColor="Gray" CornerRadius="4" Padding="0" IsVisible="False" x:Name="LeftEyePreviewFrame">
+                        <Grid>
+                            <Image x:Name="LeftEyePreviewA" Aspect="AspectFit" HeightRequest="120" IsVisible="True" />
+                            <Image x:Name="LeftEyePreviewB" Aspect="AspectFit" HeightRequest="120" IsVisible="False" />
+                        </Grid>
+                    </Frame>
                     <Label x:Name="LeftEyeStreamLabel" Text="" FontSize="11" TextColor="Green" LineBreakMode="TailTruncation" />
                 </VerticalStackLayout>
             </Frame>
@@ -35,11 +41,17 @@
             <Frame BorderColor="Gray" CornerRadius="8">
                 <VerticalStackLayout Spacing="10">
                     <Label Text="Right Eye Camera" FontAttributes="Bold" />
-                    <Picker Title="Select USB Camera" x:Name="RightEyeCameraPicker" />
+                    <Picker Title="Select USB Camera" x:Name="RightEyeCameraPicker" TextColor="Black" />
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
                         <Button x:Name="RightEyeStartButton" Text="Start" Clicked="OnStartRightEyeClicked" />
                         <Button x:Name="RightEyeStopButton" Text="Stop" Clicked="OnStopRightEyeClicked" Grid.Column="1" IsEnabled="False" />
                     </Grid>
+                    <Frame BorderColor="Gray" CornerRadius="4" Padding="0" IsVisible="False" x:Name="RightEyePreviewFrame">
+                        <Grid>
+                            <Image x:Name="RightEyePreviewA" Aspect="AspectFit" HeightRequest="120" IsVisible="True" />
+                            <Image x:Name="RightEyePreviewB" Aspect="AspectFit" HeightRequest="120" IsVisible="False" />
+                        </Grid>
+                    </Frame>
                     <Label x:Name="RightEyeStreamLabel" Text="" FontSize="11" TextColor="Green" LineBreakMode="TailTruncation" />
                 </VerticalStackLayout>
             </Frame>
@@ -48,11 +60,17 @@
             <Frame BorderColor="Gray" CornerRadius="8">
                 <VerticalStackLayout Spacing="10">
                     <Label Text="Mouth Camera" FontAttributes="Bold" />
-                    <Picker Title="Select USB Camera" x:Name="MouthCameraPicker" />
+                    <Picker Title="Select USB Camera" x:Name="MouthCameraPicker" TextColor="Black" />
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
                         <Button x:Name="MouthStartButton" Text="Start" Clicked="OnStartMouthClicked" />
                         <Button x:Name="MouthStopButton" Text="Stop" Clicked="OnStopMouthClicked" Grid.Column="1" IsEnabled="False" />
                     </Grid>
+                    <Frame BorderColor="Gray" CornerRadius="4" Padding="0" IsVisible="False" x:Name="MouthPreviewFrame">
+                        <Grid>
+                            <Image x:Name="MouthPreviewA" Aspect="AspectFit" HeightRequest="120" IsVisible="True" />
+                            <Image x:Name="MouthPreviewB" Aspect="AspectFit" HeightRequest="120" IsVisible="False" />
+                        </Grid>
+                    </Frame>
                     <Label x:Name="MouthStreamLabel" Text="" FontSize="11" TextColor="Green" LineBreakMode="TailTruncation" />
                 </VerticalStackLayout>
             </Frame>
