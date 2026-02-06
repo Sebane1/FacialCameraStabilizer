@@ -50,12 +50,13 @@ namespace FacialCameraBroadcaster.Platforms.Android
         /// Enumerates all connected USB cameras with UVC VideoStreaming interfaces.
         /// Only one enumeration runs at a time to avoid permission dialog races and timeouts.
         /// </summary>
-        public async Task<List<UsbCameraDevice>> EnumerateCamerasAsync()
+        /// <param name="skipRequestingPermission">If true, only include devices we already have permission for; never show the permission dialog (use when app is in background).</param>
+        public async Task<List<UsbCameraDevice>> EnumerateCamerasAsync(bool skipRequestingPermission = false)
         {
             await _enumLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                return await EnumerateCamerasCoreAsync().ConfigureAwait(false);
+                return await EnumerateCamerasCoreAsync(skipRequestingPermission).ConfigureAwait(false);
             }
             finally
             {
@@ -63,11 +64,11 @@ namespace FacialCameraBroadcaster.Platforms.Android
             }
         }
 
-        private async Task<List<UsbCameraDevice>> EnumerateCamerasCoreAsync()
+        private async Task<List<UsbCameraDevice>> EnumerateCamerasCoreAsync(bool skipRequestingPermission)
         {
             var cameras = new List<UsbCameraDevice>();
             int deviceCount = usbManager.DeviceList?.Count ?? 0;
-            Log.Info(Tag, $"USB devices in list: {deviceCount}");
+            Log.Info(Tag, $"USB devices in list: {deviceCount} skipRequestingPermission={skipRequestingPermission}");
 
             if (deviceCount == 0)
                 return cameras;
@@ -91,7 +92,9 @@ namespace FacialCameraBroadcaster.Platforms.Android
                     continue;
                 }
 
-                bool permission = await RequestPermissionAsync(device);
+                bool permission = skipRequestingPermission
+                    ? usbManager.HasPermission(device)
+                    : await RequestPermissionAsync(device);
                 if (permission)
                 {
                     cameras.Add(new UsbCameraDevice

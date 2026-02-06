@@ -36,6 +36,9 @@ namespace FacialCameraBroadcaster
         private const string PrefLeftEye = "FacialCamera_LeftEye";
         private const string PrefRightEye = "FacialCamera_RightEye";
         private const string PrefMouth = "FacialCamera_Mouth";
+        private const string PrefLeftEyeIndex = "FacialCamera_LeftEyeIndex";
+        private const string PrefRightEyeIndex = "FacialCamera_RightEyeIndex";
+        private const string PrefMouthIndex = "FacialCamera_MouthIndex";
 
         private IDispatcherTimer? _previewTimer;
         private IDispatcherTimer? _reconnectTimer;
@@ -56,6 +59,7 @@ namespace FacialCameraBroadcaster
         protected override void OnAppearing()
         {
             base.OnAppearing();
+            _isInForeground = true;
             enumerator = new UsbCameraEnumerator();
             UsbCameraBroadcastReceiver.UsbDeviceChanged += OnUsbDeviceChanged;
             StartPreviewTimer();
@@ -68,13 +72,31 @@ namespace FacialCameraBroadcaster
                     await LoadUsbCamerasAsync();
                 };
             }
+            else if (_leftWantsReconnect || _rightWantsReconnect || _mouthWantsReconnect)
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(500);
+                    MainThread.BeginInvokeOnMainThread(async () =>
+                    {
+                        if (_isInForeground)
+                        {
+                            await LoadUsbCamerasAsync();
+                            await TryReconnectDisconnectedSlotsAsync();
+                        }
+                    });
+                });
+            }
         }
 
         private bool _loadedOnce;
+        /// <summary>True when MainPage is visible; used to avoid showing toasts in background.</summary>
+        private bool _isInForeground;
 
         protected override void OnDisappearing()
         {
             base.OnDisappearing();
+            _isInForeground = false;
             UsbCameraBroadcastReceiver.UsbDeviceChanged -= OnUsbDeviceChanged;
             StopPreviewTimer();
             StopReconnectTimer();
@@ -143,7 +165,7 @@ namespace FacialCameraBroadcaster
                 try { SetStreamState("Mouth", true, PortMouth, frozen: true); } catch { }
                 slotStopped = slotStopped == null ? "Mouth" : "Camera(s)";
             }
-            if (slotStopped != null)
+            if (slotStopped != null && _isInForeground)
                 try { ShowToast($"{slotStopped} camera disconnected — sending last frame until reconnect"); } catch { }
             try { StartReconnectTimerIfNeeded(); } catch { }
         }
@@ -195,7 +217,8 @@ namespace FacialCameraBroadcaster
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"USB attach/reconnect error: {ex}");
-                ShowToast("Reconnect error — try Refresh cameras");
+                if (_isInForeground)
+                    ShowToast("Reconnect error — try Refresh cameras");
             }
             if (!_leftWantsReconnect && !_rightWantsReconnect && !_mouthWantsReconnect)
                 StopReconnectTimer();
@@ -203,44 +226,45 @@ namespace FacialCameraBroadcaster
 
         private const string ReconnectTag = "FacialCameraReconnect";
 
+        /// <summary>Get camera for slot by saved index (in path-sorted list); if index invalid or already used, fallback by ID then first available.</summary>
+        private static UsbCameraDevice? GetCameraForSlot(List<UsbCameraDevice> sortedCameras, HashSet<string> usedPaths, string prefIndexKey, string prefIdKey)
+        {
+            int idx = Preferences.Get(prefIndexKey, -1);
+            if (idx >= 0 && idx < sortedCameras.Count)
+            {
+                var cam = sortedCameras[idx];
+                if (!usedPaths.Contains(cam.Device.DeviceName))
+                    return cam;
+            }
+            return FindMatchingCamera(sortedCameras, Preferences.Get(prefIdKey, null), usedPaths) ?? FindFirstAvailableCamera(sortedCameras, usedPaths);
+        }
+
         private async Task TryReconnectDisconnectedSlotsAsync()
         {
             var usedPaths = new HashSet<string>(StringComparer.Ordinal);
-            // Use stable order (by device path) so the same slot gets the same camera across reconnects; avoids alternating feeds
-            var sortedCameras = (cameras ?? new List<UsbCameraDevice>()).OrderBy(c => c.Device?.DeviceName ?? "").ToList();
+            var sortedCameras = cameras ?? new List<UsbCameraDevice>();
+            if (sortedCameras.Count == 0)
+                return;
+
             Log.Info(ReconnectTag, $"TryReconnect: leftWants={_leftWantsReconnect} rightWants={_rightWantsReconnect} mouthWants={_mouthWantsReconnect} cameras={sortedCameras.Count}");
 
             if (_leftWantsReconnect && leftEyeReader == null)
             {
-                var leftId = Preferences.Get(PrefLeftEye, null);
-                var leftCam = FindMatchingCamera(sortedCameras, leftId, usedPaths) ?? FindFirstAvailableCamera(sortedCameras, usedPaths);
-                Log.Info(ReconnectTag, $"Left: savedId={leftId ?? "(null)"} found={leftCam?.Device.DeviceName ?? "null"}");
+                var leftCam = GetCameraForSlot(sortedCameras, usedPaths, PrefLeftEyeIndex, PrefLeftEye);
                 if (leftCam != null)
                 {
                     _ignoreLeftPickerChange = true;
                     try { LeftEyeCameraPicker.SelectedItem = leftCam; } finally { _ignoreLeftPickerChange = false; }
-                    // Keep server running; only replace the reader so it pulls new data when camera is back
                     bool ok = leftEyeServer != null
                         ? await ReconnectStreamAsync("Left Eye", leftCam, PortLeftEye, r => { leftEyeReader = r; }, SetStreamState)
                         : await StartCameraAsync("Left Eye", LeftEyeCameraPicker, PortLeftEye, () => GetLeftEyeFrame(), r => { leftEyeReader = r; }, s => { leftEyeServer = s; }, SetStreamState, silentFail: true);
-                    if (ok)
-                    {
-                        usedPaths.Add(leftCam.Device.DeviceName);
-                        _leftWantsReconnect = false;
-                        Log.Info(ReconnectTag, "Left eye reconnected OK");
-                        ShowToast("Left eye camera reconnected");
-                    }
-                    else
-                        Log.Warn(ReconnectTag, "Left eye Start/Reconnect returned false");
+                    if (ok) { usedPaths.Add(leftCam.Device.DeviceName); _leftWantsReconnect = false; StartStreamingServiceIfNeeded(); if (_isInForeground) ShowToast("Left eye camera reconnected"); }
                 }
-                else
-                    Log.Warn(ReconnectTag, "Left: no camera found for reconnect");
             }
+
             if (_rightWantsReconnect && rightEyeReader == null)
             {
-                var rightId = Preferences.Get(PrefRightEye, null);
-                var rightCam = FindMatchingCamera(sortedCameras, rightId, usedPaths) ?? FindFirstAvailableCamera(sortedCameras, usedPaths);
-                Log.Info(ReconnectTag, $"Right: savedId={rightId ?? "(null)"} found={rightCam?.Device.DeviceName ?? "null"}");
+                var rightCam = GetCameraForSlot(sortedCameras, usedPaths, PrefRightEyeIndex, PrefRightEye);
                 if (rightCam != null)
                 {
                     _ignoreRightPickerChange = true;
@@ -248,19 +272,13 @@ namespace FacialCameraBroadcaster
                     bool ok = rightEyeServer != null
                         ? await ReconnectStreamAsync("Right Eye", rightCam, PortRightEye, r => { rightEyeReader = r; }, SetStreamState)
                         : await StartCameraAsync("Right Eye", RightEyeCameraPicker, PortRightEye, () => GetRightEyeFrame(), r => { rightEyeReader = r; }, s => { rightEyeServer = s; }, SetStreamState, silentFail: true);
-                    if (ok)
-                    {
-                        usedPaths.Add(rightCam.Device.DeviceName);
-                        _rightWantsReconnect = false;
-                        ShowToast("Right eye camera reconnected");
-                    }
+                    if (ok) { usedPaths.Add(rightCam.Device.DeviceName); _rightWantsReconnect = false; StartStreamingServiceIfNeeded(); if (_isInForeground) ShowToast("Right eye camera reconnected"); }
                 }
             }
+
             if (_mouthWantsReconnect && mouthReader == null)
             {
-                var mouthId = Preferences.Get(PrefMouth, null);
-                var mouthCam = FindMatchingCamera(sortedCameras, mouthId, usedPaths) ?? FindFirstAvailableCamera(sortedCameras, usedPaths);
-                Log.Info(ReconnectTag, $"Mouth: savedId={mouthId ?? "(null)"} found={mouthCam?.Device.DeviceName ?? "null"}");
+                var mouthCam = GetCameraForSlot(sortedCameras, usedPaths, PrefMouthIndex, PrefMouth);
                 if (mouthCam != null)
                 {
                     _ignoreMouthPickerChange = true;
@@ -268,18 +286,8 @@ namespace FacialCameraBroadcaster
                     bool ok = mouthServer != null
                         ? await ReconnectStreamAsync("Mouth", mouthCam, PortMouth, r => { mouthReader = r; }, SetStreamState)
                         : await StartCameraAsync("Mouth", MouthCameraPicker, PortMouth, () => GetMouthFrame(), r => { mouthReader = r; }, s => { mouthServer = s; }, SetStreamState, silentFail: true);
-                    if (ok)
-                    {
-                        usedPaths.Add(mouthCam.Device.DeviceName);
-                        _mouthWantsReconnect = false;
-                        Log.Info(ReconnectTag, "Mouth reconnected OK");
-                        ShowToast("Mouth camera reconnected");
-                    }
-                    else
-                        Log.Warn(ReconnectTag, "Mouth Start/Reconnect returned false");
+                    if (ok) { usedPaths.Add(mouthCam.Device.DeviceName); _mouthWantsReconnect = false; StartStreamingServiceIfNeeded(); if (_isInForeground) ShowToast("Mouth camera reconnected"); }
                 }
-                else
-                    Log.Warn(ReconnectTag, "Mouth: no camera found for reconnect");
             }
         }
 
@@ -406,7 +414,9 @@ namespace FacialCameraBroadcaster
 
         private async Task LoadUsbCamerasCoreAsync()
         {
-            cameras = await enumerator!.EnumerateCamerasAsync();
+            bool skipPermissionRequest = !_isInForeground;
+            cameras = await enumerator!.EnumerateCamerasAsync(skipRequestingPermission: skipPermissionRequest);
+            cameras = SortCamerasByPathNumber(cameras);
             LeftEyeCameraPicker.ItemsSource = cameras.ToList();
             RightEyeCameraPicker.ItemsSource = cameras.ToList();
             MouthCameraPicker.ItemsSource = cameras.ToList();
@@ -434,6 +444,21 @@ namespace FacialCameraBroadcaster
         private static string GetDeviceId(UsbCameraDevice cam)
         {
             return $"{cam.Device.VendorId:X4}_{cam.Device.ProductId:X4}_{cam.Device.DeviceName}";
+        }
+
+        /// <summary>Parse trailing number from path (e.g. /dev/bus/usb/002/008 -> 8). Used to sort cameras consistently.</summary>
+        private static int GetPathNumber(string? deviceName)
+        {
+            if (string.IsNullOrEmpty(deviceName)) return 0;
+            var parts = deviceName.Split('/');
+            if (parts.Length > 0 && int.TryParse(parts[^1], out int n)) return n;
+            return 0;
+        }
+
+        /// <summary>Sort by path number descending (e.g. /010, /009, /008) so selection by index is stable across reconnects.</summary>
+        private static List<UsbCameraDevice> SortCamerasByPathNumber(List<UsbCameraDevice> list)
+        {
+            return list.OrderByDescending(c => GetPathNumber(c.Device?.DeviceName)).ToList();
         }
 
         private static UsbCameraDevice? FindMatchingCamera(List<UsbCameraDevice> list, string? savedId)
@@ -467,12 +492,15 @@ namespace FacialCameraBroadcaster
             _ignoreLeftPickerChange = _ignoreRightPickerChange = _ignoreMouthPickerChange = true;
             try
             {
-                var left = FindMatchingCamera(cameras, Preferences.Get(PrefLeftEye, null));
-                var right = FindMatchingCamera(cameras, Preferences.Get(PrefRightEye, null));
-                var mouth = FindMatchingCamera(cameras, Preferences.Get(PrefMouth, null));
-                if (left != null) LeftEyeCameraPicker.SelectedItem = left;
-                if (right != null) RightEyeCameraPicker.SelectedItem = right;
-                if (mouth != null) MouthCameraPicker.SelectedItem = mouth;
+                int leftIdx = Preferences.Get(PrefLeftEyeIndex, -1);
+                int rightIdx = Preferences.Get(PrefRightEyeIndex, -1);
+                int mouthIdx = Preferences.Get(PrefMouthIndex, -1);
+                if (leftIdx >= 0 && leftIdx < cameras.Count) LeftEyeCameraPicker.SelectedItem = cameras[leftIdx];
+                else if (FindMatchingCamera(cameras, Preferences.Get(PrefLeftEye, null)) is { } left) LeftEyeCameraPicker.SelectedItem = left;
+                if (rightIdx >= 0 && rightIdx < cameras.Count) RightEyeCameraPicker.SelectedItem = cameras[rightIdx];
+                else if (FindMatchingCamera(cameras, Preferences.Get(PrefRightEye, null)) is { } right) RightEyeCameraPicker.SelectedItem = right;
+                if (mouthIdx >= 0 && mouthIdx < cameras.Count) MouthCameraPicker.SelectedItem = cameras[mouthIdx];
+                else if (FindMatchingCamera(cameras, Preferences.Get(PrefMouth, null)) is { } mouth) MouthCameraPicker.SelectedItem = mouth;
             }
             finally { _ignoreLeftPickerChange = _ignoreRightPickerChange = _ignoreMouthPickerChange = false; }
         }
@@ -661,9 +689,10 @@ namespace FacialCameraBroadcaster
             setStreamState(slot, true, port, false);
             MdnsServiceRegistration.Register(slot, port);
 
-            if (slot == "Left Eye") Preferences.Set(PrefLeftEye, GetDeviceId(cam));
-            else if (slot == "Right Eye") Preferences.Set(PrefRightEye, GetDeviceId(cam));
-            else if (slot == "Mouth") Preferences.Set(PrefMouth, GetDeviceId(cam));
+            int idx = cameras.IndexOf(cam);
+            if (slot == "Left Eye") { Preferences.Set(PrefLeftEye, GetDeviceId(cam)); if (idx >= 0) Preferences.Set(PrefLeftEyeIndex, idx); }
+            else if (slot == "Right Eye") { Preferences.Set(PrefRightEye, GetDeviceId(cam)); if (idx >= 0) Preferences.Set(PrefRightEyeIndex, idx); }
+            else if (slot == "Mouth") { Preferences.Set(PrefMouth, GetDeviceId(cam)); if (idx >= 0) Preferences.Set(PrefMouthIndex, idx); }
 
             StartStreamingServiceIfNeeded();
             return true;

@@ -25,8 +25,8 @@
 		<AndroidKeyStore>true</AndroidKeyStore>
 		<AndroidSigningKeyAlias>Android</AndroidSigningKeyAlias>
 		<AndroidSigningKeyStore>$(MSBuildProjectDirectory)\android-keystore\FacialCameraBroadcaster.keystore</AndroidSigningKeyStore>
-		<AndroidSigningKeyStorePassword>880bc464-2610-4239-b938-c466a57b41eb</AndroidSigningKeyStorePassword>
-		<AndroidSigningKeyPassword>880bc464-2610-4239-b938-c466a57b41eb</AndroidSigningKeyPassword>
+		<AndroidSigningKeyPass>880bc464-2610-4239-b938-c466a57b41eb</AndroidSigningKeyPass>
+		<AndroidSigningStorePass>880bc464-2610-4239-b938-c466a57b41eb</AndroidSigningStorePass>
 	</PropertyGroup>
 
 	<ItemGroup>
