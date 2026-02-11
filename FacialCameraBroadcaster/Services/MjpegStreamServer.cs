@@ -11,6 +11,7 @@ namespace FacialCameraBroadcaster.Services
     public class MjpegStreamServer
     {
         private readonly Func<byte[]?> _getLatestFrame;
+        private readonly Func<int> _getSendIntervalMs;
         private readonly int _port;
         private TcpListener? _listener;
         private CancellationTokenSource? _cts;
@@ -22,10 +23,12 @@ namespace FacialCameraBroadcaster.Services
 
         /// <param name="port">Port to listen on (e.g. 8080).</param>
         /// <param name="getLatestFrame">Called to get the current JPEG frame; null if no frame available.</param>
-        public MjpegStreamServer(int port, Func<byte[]?> getLatestFrame)
+        /// <param name="getSendIntervalMs">Returns delay in ms between sends (e.g. 16 for 60fps, 33 for 30fps). If null, defaults to 16.</param>
+        public MjpegStreamServer(int port, Func<byte[]?> getLatestFrame, Func<int>? getSendIntervalMs = null)
         {
             _port = port;
             _getLatestFrame = getLatestFrame ?? throw new ArgumentNullException(nameof(getLatestFrame));
+            _getSendIntervalMs = getSendIntervalMs ?? (() => 16);
         }
 
         public void Start()
@@ -113,7 +116,8 @@ namespace FacialCameraBroadcaster.Services
                             try { WriteFrame(stream, boundary, lastFrame); } catch { /* client may have disconnected */ }
                         }
                     }
-                    Thread.Sleep(33); // ~30 fps max
+                    int intervalMs = Math.Clamp(_getSendIntervalMs(), 16, 500);
+                    Thread.Sleep(intervalMs);
                 }
             }
             catch (Exception) { /* ignore */ }

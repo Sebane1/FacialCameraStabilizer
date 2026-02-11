@@ -1,5 +1,6 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Sockets;
 
 public class CameraFeed
 {
@@ -15,7 +16,10 @@ public class CameraFeed
     {
         StartListener();
         _ = Task.Run(FrameRepeaterLoop);
-        _ = Task.Run(Esp32ReaderLoop);
+        if (Config.IngestPort.HasValue)
+            _ = Task.Run(IngestServerLoop);
+        else
+            _ = Task.Run(Esp32ReaderLoop);
     }
 
     void StartListener()
@@ -30,8 +34,9 @@ public class CameraFeed
             {
                 var ctx = await listener.GetContextAsync();
                 // Check which path the client requested
-                string path = ctx.Request.Url.AbsolutePath.Trim('/');
-                if (Config.CameraPathAliases.Contains(path))
+                string path = ctx.Request.Url?.AbsolutePath.Trim('/') ?? "";
+                var aliases = Config.CameraPathAliases ?? new List<string>();
+                if (aliases.Contains(path))
                 {
                     _ = Task.Run(() => HandleClient(ctx));
                 }
@@ -77,6 +82,57 @@ public class CameraFeed
         }
     }
 
+    /// <summary>Listens for pushed MJPEG frames (e.g. from Broadcaster in client mode). Protocol: 4-byte big-endian length + raw JPEG bytes per frame.</summary>
+    async Task IngestServerLoop()
+    {
+        ushort port = Config.IngestPort!.Value;
+        var listener = new TcpListener(System.Net.IPAddress.Any, port);
+        listener.Start();
+        Console.WriteLine($"{Config.Name} listening for push on port {port}...");
+        foreach (var item in Config.CameraPathAliases ?? new List<string>())
+            Console.WriteLine($"{Config.Name} will be accessible at http://localhost:{Config.Port}/" + item);
+
+        while (true)
+        {
+            try
+            {
+                using var client = await listener.AcceptTcpClientAsync();
+                using var stream = client.GetStream();
+                byte[] lenBuf = new byte[4];
+                while (true)
+                {
+                    int lenRead = 0;
+                    while (lenRead < 4)
+                    {
+                        int n = await stream.ReadAsync(lenBuf.AsMemory(lenRead, 4 - lenRead));
+                        if (n == 0) break;
+                        lenRead += n;
+                    }
+                    if (lenRead < 4) break;
+                    int frameLen = (lenBuf[0] << 24) | (lenBuf[1] << 16) | (lenBuf[2] << 8) | lenBuf[3];
+                    if (frameLen <= 0 || frameLen > 10 * 1024 * 1024) break; // sanity: max 10 MB per frame
+                    byte[] frame = new byte[frameLen];
+                    int frameRead = 0;
+                    while (frameRead < frameLen)
+                    {
+                        int n = await stream.ReadAsync(frame.AsMemory(frameRead, frameLen - frameRead));
+                        if (n == 0) break;
+                        frameRead += n;
+                    }
+                    if (frameRead < frameLen) break;
+                    LastFrame = frame;
+                    LastFrameTime = Environment.TickCount64;
+                    Broadcast(LastFrame, LastFrame.Length);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"{Config.Name} ingest error: {ex.Message}");
+            }
+            await Task.Delay(100);
+        }
+    }
+
     async Task Esp32ReaderLoop()
     {
         const int reconnectDelayMs = 10;
@@ -112,7 +168,7 @@ public class CameraFeed
             try
             {
                 Console.WriteLine($"{Config.Name} connecting to {Config.Url}...");
-                foreach (var item in Config.CameraPathAliases)
+                foreach (var item in Config.CameraPathAliases ?? new List<string>())
                 {
                     Console.WriteLine($"{Config.Name} will be accessible at http://localhost:{Config.Port}/" + item);
                 }

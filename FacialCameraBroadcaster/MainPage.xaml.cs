@@ -24,15 +24,25 @@ namespace FacialCameraBroadcaster
 
         private UsbUvcStreamReader? leftEyeReader;
         private MjpegStreamServer? leftEyeServer;
+        private MjpegPushClient? leftEyePushClient;
         private UsbUvcStreamReader? rightEyeReader;
         private MjpegStreamServer? rightEyeServer;
+        private MjpegPushClient? rightEyePushClient;
         private UsbUvcStreamReader? mouthReader;
         private MjpegStreamServer? mouthServer;
+        private MjpegPushClient? mouthPushClient;
 
         private const int PortLeftEye = 8080;
         private const int PortRightEye = 8081;
         private const int PortMouth = 8082;
+        private const int ClientPortLeftEye = 9080;
+        private const int ClientPortRightEye = 9081;
+        private const int ClientPortMouth = 9082;
 
+        private const string PrefBroadcastMode = "FacialCamera_BroadcastMode"; // "Server" or "Client"
+        private const string PrefClientHost = "FacialCamera_ClientHost";
+        private const string PrefPerformanceMode = "FacialCamera_PerformanceMode"; // "Normal" (60fps), "Reduced" (30fps), "Cellular" (15fps)
+        private const string PrefStreamResolution = "FacialCamera_StreamResolution"; // "Full" or "Low128"
         private const string PrefLeftEye = "FacialCamera_LeftEye";
         private const string PrefRightEye = "FacialCamera_RightEye";
         private const string PrefMouth = "FacialCamera_Mouth";
@@ -69,6 +79,7 @@ namespace FacialCameraBroadcaster
                 Loaded += async (_, _) =>
                 {
                     await Task.Delay(500);
+                    RestoreBroadcastModeAndClientHost();
                     await LoadUsbCamerasAsync();
                 };
             }
@@ -255,7 +266,7 @@ namespace FacialCameraBroadcaster
                 {
                     _ignoreLeftPickerChange = true;
                     try { LeftEyeCameraPicker.SelectedItem = leftCam; } finally { _ignoreLeftPickerChange = false; }
-                    bool ok = leftEyeServer != null
+                    bool ok = (leftEyeServer != null || leftEyePushClient != null)
                         ? await ReconnectStreamAsync("Left Eye", leftCam, PortLeftEye, r => { leftEyeReader = r; }, SetStreamState)
                         : await StartCameraAsync("Left Eye", LeftEyeCameraPicker, PortLeftEye, () => GetLeftEyeFrame(), r => { leftEyeReader = r; }, s => { leftEyeServer = s; }, SetStreamState, silentFail: true);
                     if (ok) { usedPaths.Add(leftCam.Device.DeviceName); _leftWantsReconnect = false; StartStreamingServiceIfNeeded(); if (_isInForeground) ShowToast("Left eye camera reconnected"); }
@@ -269,7 +280,7 @@ namespace FacialCameraBroadcaster
                 {
                     _ignoreRightPickerChange = true;
                     try { RightEyeCameraPicker.SelectedItem = rightCam; } finally { _ignoreRightPickerChange = false; }
-                    bool ok = rightEyeServer != null
+                    bool ok = (rightEyeServer != null || rightEyePushClient != null)
                         ? await ReconnectStreamAsync("Right Eye", rightCam, PortRightEye, r => { rightEyeReader = r; }, SetStreamState)
                         : await StartCameraAsync("Right Eye", RightEyeCameraPicker, PortRightEye, () => GetRightEyeFrame(), r => { rightEyeReader = r; }, s => { rightEyeServer = s; }, SetStreamState, silentFail: true);
                     if (ok) { usedPaths.Add(rightCam.Device.DeviceName); _rightWantsReconnect = false; StartStreamingServiceIfNeeded(); if (_isInForeground) ShowToast("Right eye camera reconnected"); }
@@ -283,7 +294,7 @@ namespace FacialCameraBroadcaster
                 {
                     _ignoreMouthPickerChange = true;
                     try { MouthCameraPicker.SelectedItem = mouthCam; } finally { _ignoreMouthPickerChange = false; }
-                    bool ok = mouthServer != null
+                    bool ok = (mouthServer != null || mouthPushClient != null)
                         ? await ReconnectStreamAsync("Mouth", mouthCam, PortMouth, r => { mouthReader = r; }, SetStreamState)
                         : await StartCameraAsync("Mouth", MouthCameraPicker, PortMouth, () => GetMouthFrame(), r => { mouthReader = r; }, s => { mouthServer = s; }, SetStreamState, silentFail: true);
                     if (ok) { usedPaths.Add(mouthCam.Device.DeviceName); _mouthWantsReconnect = false; StartStreamingServiceIfNeeded(); if (_isInForeground) ShowToast("Mouth camera reconnected"); }
@@ -300,6 +311,103 @@ namespace FacialCameraBroadcaster
             var activity = Microsoft.Maui.ApplicationModel.Platform.CurrentActivity as global::Android.App.Activity;
             if (activity != null)
                 activity.RunOnUiThread(() => global::Android.Widget.Toast.MakeText(activity, message, global::Android.Widget.ToastLength.Short).Show());
+        }
+
+        private bool IsClientMode() => BroadcastModePicker?.SelectedIndex == 1;
+
+        /// <summary>Delay in ms between sending frames. Normal=16 (60fps), Reduced=33 (30fps), Cellular=66 (15fps).</summary>
+        private static int GetSendIntervalMs() => Preferences.Get(PrefPerformanceMode, "Normal") switch
+        {
+            "Cellular" => 66,
+            "Reduced" => 33,
+            _ => 16
+        };
+
+        private static bool UseLowResolution() => Preferences.Get(PrefStreamResolution, "Full") == "Low128";
+
+        /// <summary>Returns the frame to send: optionally scaled to 128×128 when low-resolution mode is on.</summary>
+        private static byte[]? GetFrameForStream(Func<byte[]?> getter)
+        {
+            var raw = getter();
+            if (raw == null || raw.Length == 0) return null;
+            if (!UseLowResolution()) return raw;
+            return JpegResize.ScaleToSize(raw, 128, 128, 80);
+        }
+
+        private void RestoreBroadcastModeAndClientHost()
+        {
+            string mode = Preferences.Get(PrefBroadcastMode, "Server");
+            BroadcastModePicker.SelectedIndex = mode == "Client" ? 1 : 0;
+            ClientHostEntry.Text = Preferences.Get(PrefClientHost, "");
+            ClientModePanel.IsVisible = IsClientMode();
+            ClientHostEntry.Unfocused += (_, _) => SaveClientHost();
+            string perf = Preferences.Get(PrefPerformanceMode, "Normal");
+            PerformanceModePicker.SelectedIndex = perf switch { "Reduced" => 1, "Cellular" => 2, _ => 0 };
+            string res = Preferences.Get(PrefStreamResolution, "Full");
+            ResolutionPicker.SelectedIndex = res == "Low128" ? 1 : 0;
+        }
+
+        private void OnResolutionChanged(object? sender, EventArgs e)
+        {
+            string res = ResolutionPicker?.SelectedIndex == 1 ? "Low128" : "Full";
+            Preferences.Set(PrefStreamResolution, res);
+        }
+
+        private void OnPerformanceModeChanged(object? sender, EventArgs e)
+        {
+            string perf = PerformanceModePicker?.SelectedIndex switch { 1 => "Reduced", 2 => "Cellular", _ => "Normal" };
+            Preferences.Set(PrefPerformanceMode, perf);
+        }
+
+        private void SaveClientHost()
+        {
+            if (IsClientMode() && !string.IsNullOrWhiteSpace(ClientHostEntry.Text))
+                Preferences.Set(PrefClientHost, ClientHostEntry.Text.Trim());
+        }
+
+        private void OnBroadcastModeChanged(object? sender, EventArgs e)
+        {
+            bool client = IsClientMode();
+            ClientModePanel.IsVisible = client;
+            Preferences.Set(PrefBroadcastMode, client ? "Client" : "Server");
+            SaveClientHost();
+        }
+
+        private async void OnRestartConnectionClicked(object? sender, EventArgs e)
+        {
+            if (!IsClientMode()) return;
+            string host = (ClientHostEntry?.Text ?? Preferences.Get(PrefClientHost, "")).Trim();
+            if (string.IsNullOrEmpty(host))
+            {
+                ShowToast("Enter Stabilizer host first");
+                return;
+            }
+            SaveClientHost();
+
+            if (leftEyePushClient != null)
+            {
+                await leftEyePushClient.StopAsync();
+                leftEyePushClient = new MjpegPushClient(host, ClientPortLeftEye, () => GetFrameForStream(GetLeftEyeFrame), () => GetSendIntervalMs());
+                leftEyePushClient.Start();
+                SetStreamState("Left Eye", true, ClientPortLeftEye, false);
+            }
+            if (rightEyePushClient != null)
+            {
+                await rightEyePushClient.StopAsync();
+                rightEyePushClient = new MjpegPushClient(host, ClientPortRightEye, () => GetFrameForStream(GetRightEyeFrame), () => GetSendIntervalMs());
+                rightEyePushClient.Start();
+                SetStreamState("Right Eye", true, ClientPortRightEye, false);
+            }
+            if (mouthPushClient != null)
+            {
+                await mouthPushClient.StopAsync();
+                mouthPushClient = new MjpegPushClient(host, ClientPortMouth, () => GetFrameForStream(GetMouthFrame), () => GetSendIntervalMs());
+                mouthPushClient.Start();
+                SetStreamState("Mouth", true, ClientPortMouth, false);
+            }
+
+            if (leftEyePushClient != null || rightEyePushClient != null || mouthPushClient != null)
+                ShowToast("Connection restarted");
         }
 
         private void StartPreviewTimer()
@@ -536,6 +644,13 @@ namespace FacialCameraBroadcaster
             return cur.Length >= 2 && sav.Length >= 2 && cur[0] == sav[0] && cur[1] == sav[1];
         }
 
+        private int GetDisplayPortForSlot(string slot)
+        {
+            if (IsClientMode())
+                return slot == "Left Eye" ? ClientPortLeftEye : slot == "Right Eye" ? ClientPortRightEye : ClientPortMouth;
+            return slot == "Left Eye" ? PortLeftEye : slot == "Right Eye" ? PortRightEye : PortMouth;
+        }
+
         private async Task<bool> ReconnectStreamAsync(string slot, UsbCameraDevice cam, int port,
             Action<UsbUvcStreamReader> setReader, Action<string, bool, int, bool> setStreamState)
         {
@@ -545,7 +660,7 @@ namespace FacialCameraBroadcaster
                 return false;
             }
             setReader(reader);
-            setStreamState(slot, true, port, false);
+            setStreamState(slot, true, GetDisplayPortForSlot(slot), false);
             return true;
         }
 
@@ -566,14 +681,26 @@ namespace FacialCameraBroadcaster
 
         private void SetStreamState(string slot, bool running, int port, bool frozen = false)
         {
-            string ip = GetLocalIpAddress();
-            string url = running ? $"http://{ip}:{port}/" : "";
-            if (running && !frozen)
+            string url;
+            if (!running)
+                url = "";
+            else if (IsClientMode())
             {
-                string mdnsName = MdnsServiceRegistration.GetServiceNameForSlot(slot);
-                url += $"  (mDNS: {mdnsName}.local)";
+                string host = (ClientHostEntry?.Text ?? Preferences.Get(PrefClientHost, "")).Trim();
+                url = string.IsNullOrEmpty(host) ? $"Pushing to :{port}…" : $"Pushing to {host}:{port}";
+                if (frozen) url += " (reconnecting…)";
             }
-            if (frozen && running) url += " (frozen - reconnecting…)";
+            else
+            {
+                string ip = GetLocalIpAddress();
+                url = $"http://{ip}:{port}/";
+                if (!frozen)
+                {
+                    string mdnsName = MdnsServiceRegistration.GetServiceNameForSlot(slot);
+                    url += $"  (mDNS: {mdnsName}.local)";
+                }
+                if (frozen) url += " (frozen - reconnecting…)";
+            }
             if (slot == "Left Eye")
             {
                 LeftEyeStreamLabel.Text = url;
@@ -603,8 +730,8 @@ namespace FacialCameraBroadcaster
             if (LeftEyeCameraPicker.SelectedItem is not UsbCameraDevice cam) return;
             if (leftEyeReader != null && GetDeviceId(leftEyeReader.Camera) == GetDeviceId(cam)) return;
             if (leftEyeReader != null)
-                await StopCameraAsync("Left Eye", PortLeftEye, () => leftEyeReader, () => leftEyeServer,
-                    () => { leftEyeReader = null; leftEyeServer = null; _leftLastFrame = null; }, SetStreamState);
+                await StopCameraAsync("Left Eye", PortLeftEye, () => leftEyeReader, () => leftEyeServer, () => leftEyePushClient,
+                    () => { leftEyeReader = null; leftEyeServer = null; leftEyePushClient = null; _leftLastFrame = null; }, SetStreamState);
             if (leftEyeReader == null)
             {
                 if (!await StartCameraAsync("Left Eye", LeftEyeCameraPicker, PortLeftEye, () => GetLeftEyeFrame(), r => { leftEyeReader = r; }, s => { leftEyeServer = s; }, SetStreamState, silentFail: true))
@@ -616,8 +743,8 @@ namespace FacialCameraBroadcaster
             r => { leftEyeReader = r; }, s => { leftEyeServer = s; }, SetStreamState);
 
         private async void OnStopLeftEyeClicked(object sender, EventArgs e) => await StopCameraAsync("Left Eye", PortLeftEye,
-            () => leftEyeReader, () => leftEyeServer,
-            () => { leftEyeReader = null; leftEyeServer = null; _leftLastFrame = null; }, SetStreamState);
+            () => leftEyeReader, () => leftEyeServer, () => leftEyePushClient,
+            () => { leftEyeReader = null; leftEyeServer = null; leftEyePushClient = null; _leftLastFrame = null; }, SetStreamState);
 
         private async void OnRightEyePickerSelected(object sender, EventArgs e)
         {
@@ -625,8 +752,8 @@ namespace FacialCameraBroadcaster
             if (RightEyeCameraPicker.SelectedItem is not UsbCameraDevice cam) return;
             if (rightEyeReader != null && GetDeviceId(rightEyeReader.Camera) == GetDeviceId(cam)) return;
             if (rightEyeReader != null)
-                await StopCameraAsync("Right Eye", PortRightEye, () => rightEyeReader, () => rightEyeServer,
-                    () => { rightEyeReader = null; rightEyeServer = null; _rightLastFrame = null; }, SetStreamState);
+                await StopCameraAsync("Right Eye", PortRightEye, () => rightEyeReader, () => rightEyeServer, () => rightEyePushClient,
+                    () => { rightEyeReader = null; rightEyeServer = null; rightEyePushClient = null; _rightLastFrame = null; }, SetStreamState);
             if (rightEyeReader == null)
             {
                 if (!await StartCameraAsync("Right Eye", RightEyeCameraPicker, PortRightEye, () => GetRightEyeFrame(), r => { rightEyeReader = r; }, s => { rightEyeServer = s; }, SetStreamState, silentFail: true))
@@ -638,8 +765,8 @@ namespace FacialCameraBroadcaster
             r => { rightEyeReader = r; }, s => { rightEyeServer = s; }, SetStreamState);
 
         private async void OnStopRightEyeClicked(object sender, EventArgs e) => await StopCameraAsync("Right Eye", PortRightEye,
-            () => rightEyeReader, () => rightEyeServer,
-            () => { rightEyeReader = null; rightEyeServer = null; _rightLastFrame = null; }, SetStreamState);
+            () => rightEyeReader, () => rightEyeServer, () => rightEyePushClient,
+            () => { rightEyeReader = null; rightEyeServer = null; rightEyePushClient = null; _rightLastFrame = null; }, SetStreamState);
 
         private async void OnMouthPickerSelected(object sender, EventArgs e)
         {
@@ -647,8 +774,8 @@ namespace FacialCameraBroadcaster
             if (MouthCameraPicker.SelectedItem is not UsbCameraDevice cam) return;
             if (mouthReader != null && GetDeviceId(mouthReader.Camera) == GetDeviceId(cam)) return;
             if (mouthReader != null)
-                await StopCameraAsync("Mouth", PortMouth, () => mouthReader, () => mouthServer,
-                    () => { mouthReader = null; mouthServer = null; _mouthLastFrame = null; }, SetStreamState);
+                await StopCameraAsync("Mouth", PortMouth, () => mouthReader, () => mouthServer, () => mouthPushClient,
+                    () => { mouthReader = null; mouthServer = null; mouthPushClient = null; _mouthLastFrame = null; }, SetStreamState);
             if (mouthReader == null)
             {
                 if (!await StartCameraAsync("Mouth", MouthCameraPicker, PortMouth, () => GetMouthFrame(), r => { mouthReader = r; }, s => { mouthServer = s; }, SetStreamState, silentFail: true))
@@ -660,8 +787,8 @@ namespace FacialCameraBroadcaster
             r => { mouthReader = r; }, s => { mouthServer = s; }, SetStreamState);
 
         private async void OnStopMouthClicked(object sender, EventArgs e) => await StopCameraAsync("Mouth", PortMouth,
-            () => mouthReader, () => mouthServer,
-            () => { mouthReader = null; mouthServer = null; _mouthLastFrame = null; }, SetStreamState);
+            () => mouthReader, () => mouthServer, () => mouthPushClient,
+            () => { mouthReader = null; mouthServer = null; mouthPushClient = null; _mouthLastFrame = null; }, SetStreamState);
 
         private async Task<bool> StartCameraAsync(string slot, Picker cameraPicker, int port, Func<byte[]?> getFrame,
             Action<UsbUvcStreamReader> setReader, Action<MjpegStreamServer> setServer,
@@ -682,12 +809,35 @@ namespace FacialCameraBroadcaster
                 }
                 return false;
             }
-            var server = new MjpegStreamServer(port, getFrame);
-            server.Start();
             setReader(reader);
-            setServer(server);
-            setStreamState(slot, true, port, false);
-            MdnsServiceRegistration.Register(slot, port);
+
+            if (IsClientMode())
+            {
+                string host = (ClientHostEntry?.Text ?? Preferences.Get(PrefClientHost, "")).Trim();
+                if (string.IsNullOrEmpty(host))
+                {
+                    if (!silentFail) DisplayAlert("Error", "Enter Stabilizer host (IP or hostname) when using Client mode.", "OK");
+                    setReader(null!);
+                    await reader.StopAsync();
+                    return false;
+                }
+                SaveClientHost();
+                int clientPort = slot == "Left Eye" ? ClientPortLeftEye : slot == "Right Eye" ? ClientPortRightEye : ClientPortMouth;
+                var pushClient = new MjpegPushClient(host, clientPort, () => GetFrameForStream(getFrame), () => GetSendIntervalMs());
+                pushClient.Start();
+                if (slot == "Left Eye") leftEyePushClient = pushClient;
+                else if (slot == "Right Eye") rightEyePushClient = pushClient;
+                else mouthPushClient = pushClient;
+                setStreamState(slot, true, clientPort, false);
+            }
+            else
+            {
+                var server = new MjpegStreamServer(port, () => GetFrameForStream(getFrame), () => GetSendIntervalMs());
+                server.Start();
+                setServer(server);
+                setStreamState(slot, true, port, false);
+                MdnsServiceRegistration.Register(slot, port);
+            }
 
             int idx = cameras.IndexOf(cam);
             if (slot == "Left Eye") { Preferences.Set(PrefLeftEye, GetDeviceId(cam)); if (idx >= 0) Preferences.Set(PrefLeftEyeIndex, idx); }
@@ -699,14 +849,17 @@ namespace FacialCameraBroadcaster
         }
 
         private async Task StopCameraAsync(string slot, int port,
-            Func<UsbUvcStreamReader?> getReader, Func<MjpegStreamServer?> getServer,
+            Func<UsbUvcStreamReader?> getReader, Func<MjpegStreamServer?> getServer, Func<MjpegPushClient?>? getPushClient,
             Action clearRefs, Action<string, bool, int, bool> setStreamState)
         {
-            MdnsServiceRegistration.Unregister(slot);
+            if (!IsClientMode())
+                MdnsServiceRegistration.Unregister(slot);
             var reader = getReader();
             var server = getServer();
+            var pushClient = getPushClient?.Invoke();
             if (reader != null) await reader.StopAsync();
             if (server != null) await server.StopAsync();
+            if (pushClient != null) await pushClient.StopAsync();
             clearRefs();
             setStreamState(slot, false, port, false);
             StopStreamingServiceIfIdle();
@@ -725,7 +878,8 @@ namespace FacialCameraBroadcaster
 
         private void StopStreamingServiceIfIdle()
         {
-            if (leftEyeServer != null || rightEyeServer != null || mouthServer != null)
+            if (leftEyeServer != null || rightEyeServer != null || mouthServer != null
+                || leftEyePushClient != null || rightEyePushClient != null || mouthPushClient != null)
                 return;
             var context = Microsoft.Maui.ApplicationModel.Platform.CurrentActivity as global::Android.Content.Context;
             if (context != null)

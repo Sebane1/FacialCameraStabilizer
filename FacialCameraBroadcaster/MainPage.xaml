@@ -11,23 +11,75 @@
                 Text="Facial Camera Broadcaster"
                 FontSize="24"
                 FontAttributes="Bold"
-                HorizontalOptions="Center" />
+                HorizontalOptions="Center"
+                TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}" />
 
             <Label x:Name="StreamInfoLabel" Text="Select a camera to start streaming automatically. View streams in a browser on the same network."
-                   FontSize="12" TextColor="Gray" />
+                   FontSize="12" TextColor="{AppThemeBinding Light={StaticResource Gray500}, Dark={StaticResource Gray400}}" />
+
+            <!-- Broadcast mode: Server (host streams) or Client (push to Stabilizer) -->
+            <Frame BorderColor="{AppThemeBinding Light={StaticResource Gray200}, Dark={StaticResource Gray600}}"
+                   BackgroundColor="{AppThemeBinding Light={StaticResource White}, Dark={StaticResource Gray950}}"
+                   CornerRadius="8">
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Data flow" FontAttributes="Bold" FontSize="14"
+                           TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}" />
+                    <Picker x:Name="BroadcastModePicker" Title="Mode" SelectedIndexChanged="OnBroadcastModeChanged"
+                            TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}">
+                        <Picker.Items>
+                            <x:String>Server – host streams (Stabilizer connects to this device)</x:String>
+                            <x:String>Client – push to Stabilizer (Stabilizer listens for this device)</x:String>
+                        </Picker.Items>
+                    </Picker>
+                    <Label Text="Stream rate (for poor networks use lower fps)" FontSize="12"
+                           TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}" />
+                    <Picker x:Name="PerformanceModePicker" Title="Stream rate" SelectedIndexChanged="OnPerformanceModeChanged"
+                            TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}">
+                        <Picker.Items>
+                            <x:String>Normal (60 fps) – best for face tracking</x:String>
+                            <x:String>Reduced bandwidth (30 fps)</x:String>
+                            <x:String>Cellular (15 fps) – for poor networks</x:String>
+                        </Picker.Items>
+                    </Picker>
+                    <Label Text="Resolution (low = less bandwidth, worst-case networks)" FontSize="12"
+                           TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}" />
+                    <Picker x:Name="ResolutionPicker" Title="Resolution" SelectedIndexChanged="OnResolutionChanged"
+                            TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}">
+                        <Picker.Items>
+                            <x:String>Full (camera native)</x:String>
+                            <x:String>Low (128×128) – for very poor networks</x:String>
+                        </Picker.Items>
+                    </Picker>
+                    <VerticalStackLayout x:Name="ClientModePanel" IsVisible="False" Spacing="6">
+                        <Label Text="Stabilizer host (IP or hostname):" FontSize="12"
+                               TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}" />
+                        <Entry x:Name="ClientHostEntry" Placeholder="e.g. 192.168.1.100" Keyboard="Default" />
+                        <Label Text="Ingest ports: Left 9080, Right 9081, Mouth 9082 (set in Stabilizer config.json)"
+                               FontSize="11" TextColor="{AppThemeBinding Light={StaticResource Gray500}, Dark={StaticResource Gray400}}" />
+                        <Button x:Name="RestartConnectionButton" Text="Restart connection" Clicked="OnRestartConnectionClicked" />
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+            </Frame>
 
             <Button x:Name="RefreshCamerasButton" Text="Refresh camera list" Clicked="OnRefreshCamerasClicked" />
 
             <!-- LEFT EYE -->
-            <Frame BorderColor="Gray" CornerRadius="8">
+            <Frame BorderColor="{AppThemeBinding Light={StaticResource Gray200}, Dark={StaticResource Gray600}}"
+                   BackgroundColor="{AppThemeBinding Light={StaticResource White}, Dark={StaticResource Gray950}}"
+                   CornerRadius="8">
                 <VerticalStackLayout Spacing="10">
-                    <Label Text="Left Eye Camera" FontAttributes="Bold" FontSize="16" TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource Gray900}}" />
-                    <Picker Title="Select USB Camera" x:Name="LeftEyeCameraPicker" TextColor="Black" SelectedIndexChanged="OnLeftEyePickerSelected" />
+                    <Label Text="Left Eye Camera" FontAttributes="Bold" FontSize="16"
+                           TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}" />
+                    <Picker Title="Select USB Camera" x:Name="LeftEyeCameraPicker"
+                            TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}"
+                            SelectedIndexChanged="OnLeftEyePickerSelected" />
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
                         <Button x:Name="LeftEyeStartButton" Text="Start" Clicked="OnStartLeftEyeClicked" />
                         <Button x:Name="LeftEyeStopButton" Text="Stop" Clicked="OnStopLeftEyeClicked" Grid.Column="1" IsEnabled="False" />
                     </Grid>
-                    <Frame BorderColor="Gray" CornerRadius="4" Padding="0" IsVisible="False" x:Name="LeftEyePreviewFrame">
+                    <Frame BorderColor="{AppThemeBinding Light={StaticResource Gray200}, Dark={StaticResource Gray600}}"
+                           BackgroundColor="{AppThemeBinding Light={StaticResource White}, Dark={StaticResource Gray950}}"
+                           CornerRadius="4" Padding="0" IsVisible="False" x:Name="LeftEyePreviewFrame">
                         <Grid>
                             <Image x:Name="LeftEyePreviewA" Aspect="AspectFit" HeightRequest="120" IsVisible="True" />
                             <Image x:Name="LeftEyePreviewB" Aspect="AspectFit" HeightRequest="120" IsVisible="False" />
@@ -38,15 +90,22 @@
             </Frame>
 
             <!-- RIGHT EYE -->
-            <Frame BorderColor="Gray" CornerRadius="8">
+            <Frame BorderColor="{AppThemeBinding Light={StaticResource Gray200}, Dark={StaticResource Gray600}}"
+                   BackgroundColor="{AppThemeBinding Light={StaticResource White}, Dark={StaticResource Gray950}}"
+                   CornerRadius="8">
                 <VerticalStackLayout Spacing="10">
-                    <Label Text="Right Eye Camera" FontAttributes="Bold" FontSize="16" TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource Gray900}}" />
-                    <Picker Title="Select USB Camera" x:Name="RightEyeCameraPicker" TextColor="Black" SelectedIndexChanged="OnRightEyePickerSelected" />
+                    <Label Text="Right Eye Camera" FontAttributes="Bold" FontSize="16"
+                           TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}" />
+                    <Picker Title="Select USB Camera" x:Name="RightEyeCameraPicker"
+                            TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}"
+                            SelectedIndexChanged="OnRightEyePickerSelected" />
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
                         <Button x:Name="RightEyeStartButton" Text="Start" Clicked="OnStartRightEyeClicked" />
                         <Button x:Name="RightEyeStopButton" Text="Stop" Clicked="OnStopRightEyeClicked" Grid.Column="1" IsEnabled="False" />
                     </Grid>
-                    <Frame BorderColor="Gray" CornerRadius="4" Padding="0" IsVisible="False" x:Name="RightEyePreviewFrame">
+                    <Frame BorderColor="{AppThemeBinding Light={StaticResource Gray200}, Dark={StaticResource Gray600}}"
+                           BackgroundColor="{AppThemeBinding Light={StaticResource White}, Dark={StaticResource Gray950}}"
+                           CornerRadius="4" Padding="0" IsVisible="False" x:Name="RightEyePreviewFrame">
                         <Grid>
                             <Image x:Name="RightEyePreviewA" Aspect="AspectFit" HeightRequest="120" IsVisible="True" />
                             <Image x:Name="RightEyePreviewB" Aspect="AspectFit" HeightRequest="120" IsVisible="False" />
@@ -57,15 +116,22 @@
             </Frame>
 
             <!-- MOUTH -->
-            <Frame BorderColor="Gray" CornerRadius="8">
+            <Frame BorderColor="{AppThemeBinding Light={StaticResource Gray200}, Dark={StaticResource Gray600}}"
+                   BackgroundColor="{AppThemeBinding Light={StaticResource White}, Dark={StaticResource Gray950}}"
+                   CornerRadius="8">
                 <VerticalStackLayout Spacing="10">
-                    <Label Text="Mouth Camera" FontAttributes="Bold" FontSize="16" TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource Gray900}}" />
-                    <Picker Title="Select USB Camera" x:Name="MouthCameraPicker" TextColor="Black" SelectedIndexChanged="OnMouthPickerSelected" />
+                    <Label Text="Mouth Camera" FontAttributes="Bold" FontSize="16"
+                           TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}" />
+                    <Picker Title="Select USB Camera" x:Name="MouthCameraPicker"
+                            TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}"
+                            SelectedIndexChanged="OnMouthPickerSelected" />
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
                         <Button x:Name="MouthStartButton" Text="Start" Clicked="OnStartMouthClicked" />
                         <Button x:Name="MouthStopButton" Text="Stop" Clicked="OnStopMouthClicked" Grid.Column="1" IsEnabled="False" />
                     </Grid>
-                    <Frame BorderColor="Gray" CornerRadius="4" Padding="0" IsVisible="False" x:Name="MouthPreviewFrame">
+                    <Frame BorderColor="{AppThemeBinding Light={StaticResource Gray200}, Dark={StaticResource Gray600}}"
+                           BackgroundColor="{AppThemeBinding Light={StaticResource White}, Dark={StaticResource Gray950}}"
+                           CornerRadius="4" Padding="0" IsVisible="False" x:Name="MouthPreviewFrame">
                         <Grid>
                             <Image x:Name="MouthPreviewA" Aspect="AspectFit" HeightRequest="120" IsVisible="True" />
                             <Image x:Name="MouthPreviewB" Aspect="AspectFit" HeightRequest="120" IsVisible="False" />

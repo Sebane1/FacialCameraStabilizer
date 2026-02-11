@@ -30,6 +30,11 @@ namespace FacialCameraBroadcaster.Platforms.Android
     public class UsbCameraEnumerator
     {
         private const string UsbPermissionAction = "com.FacialCameraBroadcaster.USB_PERMISSION";
+
+        /// <summary>HID devices with this VID/PID are explicitly ignored when scanning (e.g. tracker receiver).</summary>
+        private const int HID_TRACKER_RECEIVER_VID = 0x1209;
+        private const int HID_TRACKER_RECEIVER_PID = 0x7690;
+
         private readonly UsbManager usbManager;
         private static readonly SemaphoreSlim _enumLock = new(1, 1);
 
@@ -76,6 +81,13 @@ namespace FacialCameraBroadcaster.Platforms.Android
             foreach (var entry in usbManager.DeviceList!)
             {
                 var device = entry.Value;
+
+                if (device.VendorId == HID_TRACKER_RECEIVER_VID && device.ProductId == HID_TRACKER_RECEIVER_PID)
+                {
+                    Log.Info(Tag, $"Skipping HID tracker receiver: {device.DeviceName} VID=0x{device.VendorId:X4} PID=0x{device.ProductId:X4}");
+                    continue;
+                }
+
                 Log.Info(Tag, $"Device: {device.DeviceName} VID=0x{device.VendorId:X4} PID=0x{device.ProductId:X4} interfaces={device.InterfaceCount}");
 
                 var uvcInterface = FindVideoStreamingInterface(device);
