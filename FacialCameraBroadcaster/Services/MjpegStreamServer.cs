@@ -59,6 +59,8 @@ namespace FacialCameraBroadcaster.Services
                 try
                 {
                     var client = await _listener.AcceptTcpClientAsync(ct).ConfigureAwait(false);
+                    client.SendTimeout = 2000;
+                    client.ReceiveTimeout = 2000;
                     _ = Task.Run(() => ServeClient(client), ct);
                 }
                 catch (OperationCanceledException) { break; }
@@ -72,6 +74,8 @@ namespace FacialCameraBroadcaster.Services
             try
             {
                 using var stream = client.GetStream();
+                stream.WriteTimeout = 2000;
+                stream.ReadTimeout = 2000;
                 var buffer = new byte[4096];
                 int read = stream.Read(buffer, 0, buffer.Length);
                 if (read <= 0) return;

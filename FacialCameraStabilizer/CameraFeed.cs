@@ -101,10 +101,11 @@ public class CameraFeed
                 byte[] lenBuf = new byte[4];
                 while (true)
                 {
+                    using var cts = new CancellationTokenSource(3000);
                     int lenRead = 0;
                     while (lenRead < 4)
                     {
-                        int n = await stream.ReadAsync(lenBuf.AsMemory(lenRead, 4 - lenRead));
+                        int n = await stream.ReadAsync(lenBuf.AsMemory(lenRead, 4 - lenRead), cts.Token);
                         if (n == 0) break;
                         lenRead += n;
                     }
@@ -115,7 +116,7 @@ public class CameraFeed
                     int frameRead = 0;
                     while (frameRead < frameLen)
                     {
-                        int n = await stream.ReadAsync(frame.AsMemory(frameRead, frameLen - frameRead));
+                        int n = await stream.ReadAsync(frame.AsMemory(frameRead, frameLen - frameRead), cts.Token);
                         if (n == 0) break;
                         frameRead += n;
                     }
@@ -135,9 +136,9 @@ public class CameraFeed
 
     async Task Esp32ReaderLoop()
     {
-        const int reconnectDelayMs = 10;
-        const int stallTimeoutMs = 50;
-        const int watchdogIntervalMs = 40;
+        const int reconnectDelayMs = 1000;
+        const int stallTimeoutMs = 3000;
+        const int watchdogIntervalMs = 500;
 
         while (true)
         {

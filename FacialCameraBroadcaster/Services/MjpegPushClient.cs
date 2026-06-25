@@ -75,8 +75,12 @@ namespace FacialCameraBroadcaster.Services
                 try
                 {
                     _client = new TcpClient();
+                    _client.SendTimeout = 2000;
+                    _client.ReceiveTimeout = 2000;
                     await _client.ConnectAsync(_host, _port, ct).ConfigureAwait(false);
                     _stream = _client.GetStream();
+                    _stream.WriteTimeout = 2000;
+                    _stream.ReadTimeout = 2000;
 
                     while (_running && _client.Connected && !ct.IsCancellationRequested)
                     {
@@ -116,7 +120,9 @@ namespace FacialCameraBroadcaster.Services
                 }
 
                 if (_running && !ct.IsCancellationRequested)
-                    await Task.Delay(reconnectDelayMs, ct).ConfigureAwait(false);
+                {
+                    try { await Task.Delay(reconnectDelayMs, ct).ConfigureAwait(false); } catch { }
+                }
             }
         }
 
