@@ -10,11 +10,28 @@ using Application = Android.App.Application;
 
 namespace FacialCameraBroadcaster.Platforms.Android
 {
-    public class UsbCameraDevice
+    public interface ICameraDevice
     {
-        public UsbDevice Device { get; init; }
-        public UsbInterface VideoInterface { get; init; }
-        public UsbEndpoint VideoEndpoint { get; init; }
+        string DeviceName { get; }
+        string Id { get; }
+        bool IsUsb { get; }
+    }
+
+    public interface ICameraReader
+    {
+        ICameraDevice Camera { get; }
+        byte[]? LatestFrame { get; }
+        bool IsRunning { get; }
+        Task<bool> StartAsync();
+        Task StopAsync();
+        void Abandon();
+    }
+
+    public class UsbCameraDevice : ICameraDevice
+    {
+        public UsbDevice Device { get; init; } = null!;
+        public UsbInterface VideoInterface { get; init; } = null!;
+        public UsbEndpoint VideoEndpoint { get; init; } = null!;
 
         /// <summary>Stored at creation so we can match after detach without touching the Java UsbDevice.</summary>
         public int VendorId { get; init; }
@@ -22,9 +39,23 @@ namespace FacialCameraBroadcaster.Platforms.Android
         public int ProductId { get; init; }
 
         public string DeviceName => Device.DeviceName;
+        public string Id => $"{VendorId:X4}_{ProductId:X4}_{DeviceName}";
+        public bool IsUsb => true;
 
         public override string ToString() =>
             $"USB Camera: {DeviceName}, VID:0x{VendorId:X4}, PID:0x{ProductId:X4}";
+    }
+
+    public class AndroidCameraDevice : ICameraDevice
+    {
+        public string CameraId { get; init; } = "";
+        public string LensFacing { get; init; } = "";
+        
+        public string DeviceName => $"{LensFacing} Camera ({CameraId})";
+        public string Id => $"AndroidCam_{CameraId}";
+        public bool IsUsb => false;
+
+        public override string ToString() => DeviceName;
     }
 
     public class UsbCameraEnumerator
@@ -56,7 +87,7 @@ namespace FacialCameraBroadcaster.Platforms.Android
         /// Only one enumeration runs at a time to avoid permission dialog races and timeouts.
         /// </summary>
         /// <param name="skipRequestingPermission">If true, only include devices we already have permission for; never show the permission dialog (use when app is in background).</param>
-        public async Task<List<UsbCameraDevice>> EnumerateCamerasAsync(bool skipRequestingPermission = false)
+        public async Task<List<ICameraDevice>> EnumerateCamerasAsync(bool skipRequestingPermission = false)
         {
             await _enumLock.WaitAsync().ConfigureAwait(false);
             try
@@ -69,9 +100,30 @@ namespace FacialCameraBroadcaster.Platforms.Android
             }
         }
 
-        private async Task<List<UsbCameraDevice>> EnumerateCamerasCoreAsync(bool skipRequestingPermission)
+        private async Task<List<ICameraDevice>> EnumerateCamerasCoreAsync(bool skipRequestingPermission)
         {
-            var cameras = new List<UsbCameraDevice>();
+            var cameras = new List<ICameraDevice>();
+            
+            // 1. Android built-in cameras
+            try
+            {
+                var cameraManager = (global::Android.Hardware.Camera2.CameraManager?)Application.Context.GetSystemService(Context.CameraService);
+                if (cameraManager != null)
+                {
+                    foreach (var camId in cameraManager.GetCameraIdList())
+                    {
+                        var chars = cameraManager.GetCameraCharacteristics(camId);
+                        var facing = (int?)chars.Get(global::Android.Hardware.Camera2.CameraCharacteristics.LensFacing);
+                        string facingStr = facing == (int)global::Android.Hardware.Camera2.LensFacing.Front ? "Front" :
+                                           facing == (int)global::Android.Hardware.Camera2.LensFacing.Back ? "Back" : "External";
+                        cameras.Add(new AndroidCameraDevice { CameraId = camId, LensFacing = facingStr });
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Log.Warn(Tag, $"Failed to enumerate Android cameras: {ex.Message}");
+            }
             int deviceCount = usbManager.DeviceList?.Count ?? 0;
             Log.Info(Tag, $"USB devices in list: {deviceCount} skipRequestingPermission={skipRequestingPermission}");
 

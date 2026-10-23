@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 
+namespace FacialCameraStabilizer;
+
 public class CameraFeed
 {
     CameraConfig Config;
@@ -12,17 +14,25 @@ public class CameraFeed
 
     public CameraFeed(CameraConfig config) => Config = config;
 
-    public async Task StartAsync()
+    public static event Action<string>? LogMessage;
+    
+    private void Log(string msg)
     {
-        StartListener();
-        _ = Task.Run(FrameRepeaterLoop);
-        if (Config.IngestPort.HasValue)
-            _ = Task.Run(IngestServerLoop);
-        else
-            _ = Task.Run(Esp32ReaderLoop);
+        LogMessage?.Invoke(msg);
+        Console.WriteLine(msg);
     }
 
-    void StartListener()
+    public async Task StartAsync(CancellationToken ct = default)
+    {
+        StartListener(ct);
+        _ = Task.Run(() => FrameRepeaterLoop(ct), ct);
+        if (Config.IsServer)
+            _ = Task.Run(() => IngestServerLoop(ct), ct);
+        else
+            _ = Task.Run(() => Esp32ReaderLoop(ct), ct);
+    }
+
+    void StartListener(CancellationToken ct)
     {
         HttpListener listener = new HttpListener();
         listener.Prefixes.Add($"http://localhost:{Config.Port}/");
@@ -30,28 +40,31 @@ public class CameraFeed
 
         _ = Task.Run(async () =>
         {
-            while (true)
+            try
             {
-                var ctx = await listener.GetContextAsync();
-                // Check which path the client requested
-                string path = ctx.Request.Url?.AbsolutePath.Trim('/') ?? "";
-                var aliases = Config.CameraPathAliases ?? new List<string>();
-                if (aliases.Contains(path))
+                while (!ct.IsCancellationRequested)
                 {
-                    _ = Task.Run(() => HandleClient(ctx));
-                }
-                else
-                {
-                    ctx.Response.StatusCode = 404;
-                    ctx.Response.Close();
+                    var ctx = await listener.GetContextAsync();
+                    // Check which path the client requested
+                    string path = ctx.Request.Url?.AbsolutePath.Trim('/') ?? "";
+                    var aliases = Config.CameraPathAliases ?? new List<string>();
+                    if (aliases.Contains(path))
+                    {
+                        _ = Task.Run(() => HandleClient(ctx, ct));
+                    }
+                    else
+                    {
+                        ctx.Response.StatusCode = 404;
+                        ctx.Response.Close();
+                    }
                 }
             }
-        });
+            catch { }
+            finally { listener.Stop(); }
+        }, ct);
     }
 
-
-
-    void HandleClient(HttpListenerContext ctx)
+    void HandleClient(HttpListenerContext ctx, CancellationToken ct)
     {
         ctx.Response.ContentType = "multipart/x-mixed-replace; boundary=frame";
         ctx.Response.SendChunked = true;
@@ -69,7 +82,7 @@ public class CameraFeed
 
         try
         {
-            while (ctx.Response.OutputStream.CanWrite)
+            while (ctx.Response.OutputStream.CanWrite && !ct.IsCancellationRequested)
             {
                 Thread.Sleep(100);
             }
@@ -83,16 +96,16 @@ public class CameraFeed
     }
 
     /// <summary>Listens for pushed MJPEG frames (e.g. from Broadcaster in client mode). Protocol: 4-byte big-endian length + raw JPEG bytes per frame.</summary>
-    async Task IngestServerLoop()
+    async Task IngestServerLoop(CancellationToken ct)
     {
-        ushort port = Config.IngestPort!.Value;
+        ushort port = Config.IngestPort ?? 9000;
         var listener = new TcpListener(System.Net.IPAddress.Any, port);
         listener.Start();
-        Console.WriteLine($"{Config.Name} listening for push on port {port}...");
+        Log($"{Config.Name} listening for push on port {port}...");
         foreach (var item in Config.CameraPathAliases ?? new List<string>())
-            Console.WriteLine($"{Config.Name} will be accessible at http://localhost:{Config.Port}/" + item);
+            Log($"{Config.Name} will be accessible at http://localhost:{Config.Port}/" + item);
 
-        while (true)
+        while (!ct.IsCancellationRequested)
         {
             try
             {
@@ -128,22 +141,21 @@ public class CameraFeed
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"{Config.Name} ingest error: {ex.Message}");
+                Log($"{Config.Name} ingest error: {ex.Message}");
             }
-            await Task.Delay(100);
+            try { await Task.Delay(100, ct); } catch { }
         }
     }
 
-    async Task Esp32ReaderLoop()
+    async Task Esp32ReaderLoop(CancellationToken ct)
     {
         const int reconnectDelayMs = 1000;
         const int stallTimeoutMs = 3000;
         const int watchdogIntervalMs = 500;
 
-        while (true)
+        while (!ct.IsCancellationRequested)
         {
-            using var cts = new CancellationTokenSource();
-            var readCts = cts;
+            using var readCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             long lastFrameSeen = Environment.TickCount64;
 
             // Start watchdog
@@ -160,7 +172,7 @@ public class CameraFeed
                     long age = Environment.TickCount64 - LastFrameTime;
                     if (age > stallTimeoutMs)
                     {
-                        Console.WriteLine($"{Config.Name} frames stalled, canceling read to reconnect...");
+                        Log($"{Config.Name} frames stalled, canceling read to reconnect...");
                         readCts.Cancel();
                     }
                 }
@@ -168,10 +180,10 @@ public class CameraFeed
 
             try
             {
-                Console.WriteLine($"{Config.Name} connecting to {Config.Url}...");
+                Log($"{Config.Name} connecting to {Config.Url}...");
                 foreach (var item in Config.CameraPathAliases ?? new List<string>())
                 {
-                    Console.WriteLine($"{Config.Name} will be accessible at http://localhost:{Config.Port}/" + item);
+                    Log($"{Config.Name} will be accessible at http://localhost:{Config.Port}/" + item);
                 }
                 using var stream = await Http.GetStreamAsync(Config.Url, readCts.Token);
 
@@ -206,26 +218,26 @@ public class CameraFeed
             }
             catch (OperationCanceledException)
             {
-                Console.WriteLine("Feed has been killed");
+                if (ct.IsCancellationRequested) break;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"{Config.Name} error: {ex.Message}");
+                Log($"{Config.Name} error: {ex.Message}");
             }
 
-            await Task.Delay(reconnectDelayMs);
+            try { await Task.Delay(reconnectDelayMs, ct); } catch { }
         }
     }
 
 
-    async Task FrameRepeaterLoop()
+    async Task FrameRepeaterLoop(CancellationToken ct)
     {
         const int StallTimeoutMs = 750;
         const int KeepAliveMs = 250;
 
-        while (true)
+        while (!ct.IsCancellationRequested)
         {
-            await Task.Delay(KeepAliveMs);
+            try { await Task.Delay(KeepAliveMs, ct); } catch { break; }
             if (LastFrame == null)
             {
                 continue;

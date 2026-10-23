@@ -20,15 +20,15 @@ namespace FacialCameraBroadcaster
     {
 #if ANDROID
         private UsbCameraEnumerator? enumerator;
-        private List<UsbCameraDevice> cameras = new();
+        private List<ICameraDevice> cameras = new();
 
-        private UsbUvcStreamReader? leftEyeReader;
+        private ICameraReader? leftEyeReader;
         private MjpegStreamServer? leftEyeServer;
         private MjpegPushClient? leftEyePushClient;
-        private UsbUvcStreamReader? rightEyeReader;
+        private ICameraReader? rightEyeReader;
         private MjpegStreamServer? rightEyeServer;
         private MjpegPushClient? rightEyePushClient;
-        private UsbUvcStreamReader? mouthReader;
+        private ICameraReader? mouthReader;
         private MjpegStreamServer? mouthServer;
         private MjpegPushClient? mouthPushClient;
 
@@ -134,7 +134,7 @@ namespace FacialCameraBroadcaster
         private async Task OnUsbDeviceDetachedAsync(int detachVid, int detachPid)
         {
             string? slotStopped = null;
-            if (leftEyeReader != null && leftEyeReader.Camera.VendorId == detachVid && leftEyeReader.Camera.ProductId == detachPid)
+            if (leftEyeReader?.Camera is UsbCameraDevice usbCam1 && usbCam1.VendorId == detachVid && usbCam1.ProductId == detachPid)
             {
                 try
                 {
@@ -148,7 +148,7 @@ namespace FacialCameraBroadcaster
                 try { SetStreamState("Left Eye", true, PortLeftEye, frozen: true); } catch { }
                 slotStopped = "Left eye";
             }
-            if (rightEyeReader != null && rightEyeReader.Camera.VendorId == detachVid && rightEyeReader.Camera.ProductId == detachPid)
+            if (rightEyeReader?.Camera is UsbCameraDevice usbCam2 && usbCam2.VendorId == detachVid && usbCam2.ProductId == detachPid)
             {
                 try
                 {
@@ -162,7 +162,7 @@ namespace FacialCameraBroadcaster
                 try { SetStreamState("Right Eye", true, PortRightEye, frozen: true); } catch { }
                 slotStopped = slotStopped == null ? "Right eye" : "Camera(s)";
             }
-            if (mouthReader != null && mouthReader.Camera.VendorId == detachVid && mouthReader.Camera.ProductId == detachPid)
+            if (mouthReader?.Camera is UsbCameraDevice usbCam3 && usbCam3.VendorId == detachVid && usbCam3.ProductId == detachPid)
             {
                 try
                 {
@@ -238,13 +238,13 @@ namespace FacialCameraBroadcaster
         private const string ReconnectTag = "FacialCameraReconnect";
 
         /// <summary>Get camera for slot by saved index (in path-sorted list); if index invalid or already used, fallback by ID then first available.</summary>
-        private static UsbCameraDevice? GetCameraForSlot(List<UsbCameraDevice> sortedCameras, HashSet<string> usedPaths, string prefIndexKey, string prefIdKey)
+        private static ICameraDevice? GetCameraForSlot(List<ICameraDevice> sortedCameras, HashSet<string> usedPaths, string prefIndexKey, string prefIdKey)
         {
             int idx = Preferences.Get(prefIndexKey, -1);
             if (idx >= 0 && idx < sortedCameras.Count)
             {
                 var cam = sortedCameras[idx];
-                if (!usedPaths.Contains(cam.Device.DeviceName))
+                if (!usedPaths.Contains(cam.DeviceName))
                     return cam;
             }
             return FindMatchingCamera(sortedCameras, Preferences.Get(prefIdKey, null), usedPaths) ?? FindFirstAvailableCamera(sortedCameras, usedPaths);
@@ -253,7 +253,7 @@ namespace FacialCameraBroadcaster
         private async Task TryReconnectDisconnectedSlotsAsync()
         {
             var usedPaths = new HashSet<string>(StringComparer.Ordinal);
-            var sortedCameras = cameras ?? new List<UsbCameraDevice>();
+            var sortedCameras = cameras ?? new List<ICameraDevice>();
             if (sortedCameras.Count == 0)
                 return;
 
@@ -269,7 +269,7 @@ namespace FacialCameraBroadcaster
                     bool ok = (leftEyeServer != null || leftEyePushClient != null)
                         ? await ReconnectStreamAsync("Left Eye", leftCam, PortLeftEye, r => { leftEyeReader = r; }, SetStreamState)
                         : await StartCameraAsync("Left Eye", LeftEyeCameraPicker, PortLeftEye, () => GetLeftEyeFrame(), r => { leftEyeReader = r; }, s => { leftEyeServer = s; }, SetStreamState, silentFail: true);
-                    if (ok) { usedPaths.Add(leftCam.Device.DeviceName); _leftWantsReconnect = false; StartStreamingServiceIfNeeded(); if (_isInForeground) ShowToast("Left eye camera reconnected"); }
+                    if (ok) { usedPaths.Add(leftCam.DeviceName); _leftWantsReconnect = false; StartStreamingServiceIfNeeded(); if (_isInForeground) ShowToast("Left eye camera reconnected"); }
                 }
             }
 
@@ -283,7 +283,7 @@ namespace FacialCameraBroadcaster
                     bool ok = (rightEyeServer != null || rightEyePushClient != null)
                         ? await ReconnectStreamAsync("Right Eye", rightCam, PortRightEye, r => { rightEyeReader = r; }, SetStreamState)
                         : await StartCameraAsync("Right Eye", RightEyeCameraPicker, PortRightEye, () => GetRightEyeFrame(), r => { rightEyeReader = r; }, s => { rightEyeServer = s; }, SetStreamState, silentFail: true);
-                    if (ok) { usedPaths.Add(rightCam.Device.DeviceName); _rightWantsReconnect = false; StartStreamingServiceIfNeeded(); if (_isInForeground) ShowToast("Right eye camera reconnected"); }
+                    if (ok) { usedPaths.Add(rightCam.DeviceName); _rightWantsReconnect = false; StartStreamingServiceIfNeeded(); if (_isInForeground) ShowToast("Right eye camera reconnected"); }
                 }
             }
 
@@ -297,7 +297,7 @@ namespace FacialCameraBroadcaster
                     bool ok = (mouthServer != null || mouthPushClient != null)
                         ? await ReconnectStreamAsync("Mouth", mouthCam, PortMouth, r => { mouthReader = r; }, SetStreamState)
                         : await StartCameraAsync("Mouth", MouthCameraPicker, PortMouth, () => GetMouthFrame(), r => { mouthReader = r; }, s => { mouthServer = s; }, SetStreamState, silentFail: true);
-                    if (ok) { usedPaths.Add(mouthCam.Device.DeviceName); _mouthWantsReconnect = false; StartStreamingServiceIfNeeded(); if (_isInForeground) ShowToast("Mouth camera reconnected"); }
+                    if (ok) { usedPaths.Add(mouthCam.DeviceName); _mouthWantsReconnect = false; StartStreamingServiceIfNeeded(); if (_isInForeground) ShowToast("Mouth camera reconnected"); }
                 }
             }
         }
@@ -531,7 +531,7 @@ namespace FacialCameraBroadcaster
             LeftEyeCameraPicker.ItemDisplayBinding =
                 RightEyeCameraPicker.ItemDisplayBinding =
                 MouthCameraPicker.ItemDisplayBinding =
-                    new Binding(nameof(UsbCameraDevice.DeviceName));
+                    new Binding(nameof(ICameraDevice.DeviceName));
 
             RestoreSavedSelection();
             await Task.Delay(400);
@@ -549,9 +549,9 @@ namespace FacialCameraBroadcaster
                 StreamInfoLabel.Text = "Select a camera to start streaming automatically. View streams in a browser on the same network.";
         }
 
-        private static string GetDeviceId(UsbCameraDevice cam)
+        private static string GetDeviceId(ICameraDevice cam)
         {
-            return $"{cam.Device.VendorId:X4}_{cam.Device.ProductId:X4}_{cam.Device.DeviceName}";
+            return cam.Id;
         }
 
         /// <summary>Parse trailing number from path (e.g. /dev/bus/usb/002/008 -> 8). Used to sort cameras consistently.</summary>
@@ -564,34 +564,34 @@ namespace FacialCameraBroadcaster
         }
 
         /// <summary>Sort by path number descending (e.g. /010, /009, /008) so selection by index is stable across reconnects.</summary>
-        private static List<UsbCameraDevice> SortCamerasByPathNumber(List<UsbCameraDevice> list)
+        private static List<ICameraDevice> SortCamerasByPathNumber(List<ICameraDevice> list)
         {
-            return list.OrderByDescending(c => GetPathNumber(c.Device?.DeviceName)).ToList();
+            return list.OrderByDescending(c => GetPathNumber(c.DeviceName)).ToList();
         }
 
-        private static UsbCameraDevice? FindMatchingCamera(List<UsbCameraDevice> list, string? savedId)
+        private static ICameraDevice? FindMatchingCamera(List<ICameraDevice> list, string? savedId)
         {
             return FindMatchingCamera(list, savedId, null);
         }
 
         /// <param name="excludeDevicePaths">Device paths (e.g. DeviceName) already assigned this reconnect round; pass null to not exclude.</param>
-        private static UsbCameraDevice? FindMatchingCamera(List<UsbCameraDevice> list, string? savedId, HashSet<string>? excludeDevicePaths)
+        private static ICameraDevice? FindMatchingCamera(List<ICameraDevice> list, string? savedId, HashSet<string>? excludeDevicePaths)
         {
             if (string.IsNullOrEmpty(savedId) || list.Count == 0) return null;
-            bool excluded(UsbCameraDevice c) => excludeDevicePaths != null && excludeDevicePaths.Contains(c.Device.DeviceName);
+            bool excluded(ICameraDevice c) => excludeDevicePaths != null && excludeDevicePaths.Contains(c.DeviceName);
             var exact = list.FirstOrDefault(c => GetDeviceId(c) == savedId && !excluded(c));
             if (exact != null) return exact;
             var parts = savedId.Split('_');
             if (parts.Length >= 2 && int.TryParse(parts[0], System.Globalization.NumberStyles.HexNumber, null, out int vid) && int.TryParse(parts[1], System.Globalization.NumberStyles.HexNumber, null, out int pid))
-                return list.FirstOrDefault(c => c.VendorId == vid && c.ProductId == pid && !excluded(c));
+                return list.FirstOrDefault(c => c is UsbCameraDevice usb && usb.VendorId == vid && usb.ProductId == pid && !excluded(c));
             return null;
         }
 
         /// <summary>First camera not in excludeDevicePaths; used when no saved preference or path changed after replug.</summary>
-        private static UsbCameraDevice? FindFirstAvailableCamera(List<UsbCameraDevice> list, HashSet<string>? excludeDevicePaths)
+        private static ICameraDevice? FindFirstAvailableCamera(List<ICameraDevice> list, HashSet<string>? excludeDevicePaths)
         {
             if (list == null || list.Count == 0) return null;
-            bool excluded(UsbCameraDevice c) => excludeDevicePaths != null && excludeDevicePaths.Contains(c.Device.DeviceName);
+            bool excluded(ICameraDevice c) => excludeDevicePaths != null && excludeDevicePaths.Contains(c.DeviceName);
             return list.FirstOrDefault(c => !excluded(c));
         }
 
@@ -619,17 +619,17 @@ namespace FacialCameraBroadcaster
             string? rightId = Preferences.Get(PrefRightEye, null);
             string? mouthId = Preferences.Get(PrefMouth, null);
 
-            if (leftEyeReader == null && leftId != null && LeftEyeCameraPicker.SelectedItem is UsbCameraDevice leftCam && (GetDeviceId(leftCam) == leftId || DeviceIdVidPidMatch(GetDeviceId(leftCam), leftId)))
+            if (leftEyeReader == null && leftId != null && LeftEyeCameraPicker.SelectedItem is ICameraDevice leftCam && (GetDeviceId(leftCam) == leftId || DeviceIdVidPidMatch(GetDeviceId(leftCam), leftId)))
             {
                 if (!await StartCameraAsync("Left Eye", LeftEyeCameraPicker, PortLeftEye, () => GetLeftEyeFrame(), r => { leftEyeReader = r; }, s => { leftEyeServer = s; }, SetStreamState, silentFail: true))
                     _leftWantsReconnect = true;
             }
-            if (rightEyeReader == null && rightId != null && RightEyeCameraPicker.SelectedItem is UsbCameraDevice rightCam && (GetDeviceId(rightCam) == rightId || DeviceIdVidPidMatch(GetDeviceId(rightCam), rightId)))
+            if (rightEyeReader == null && rightId != null && RightEyeCameraPicker.SelectedItem is ICameraDevice rightCam && (GetDeviceId(rightCam) == rightId || DeviceIdVidPidMatch(GetDeviceId(rightCam), rightId)))
             {
                 if (!await StartCameraAsync("Right Eye", RightEyeCameraPicker, PortRightEye, () => GetRightEyeFrame(), r => { rightEyeReader = r; }, s => { rightEyeServer = s; }, SetStreamState, silentFail: true))
                     _rightWantsReconnect = true;
             }
-            if (mouthReader == null && mouthId != null && MouthCameraPicker.SelectedItem is UsbCameraDevice mouthCam && (GetDeviceId(mouthCam) == mouthId || DeviceIdVidPidMatch(GetDeviceId(mouthCam), mouthId)))
+            if (mouthReader == null && mouthId != null && MouthCameraPicker.SelectedItem is ICameraDevice mouthCam && (GetDeviceId(mouthCam) == mouthId || DeviceIdVidPidMatch(GetDeviceId(mouthCam), mouthId)))
             {
                 if (!await StartCameraAsync("Mouth", MouthCameraPicker, PortMouth, () => GetMouthFrame(), r => { mouthReader = r; }, s => { mouthServer = s; }, SetStreamState, silentFail: true))
                     _mouthWantsReconnect = true;
@@ -651,10 +651,13 @@ namespace FacialCameraBroadcaster
             return slot == "Left Eye" ? PortLeftEye : slot == "Right Eye" ? PortRightEye : PortMouth;
         }
 
-        private async Task<bool> ReconnectStreamAsync(string slot, UsbCameraDevice cam, int port,
-            Action<UsbUvcStreamReader> setReader, Action<string, bool, int, bool> setStreamState)
+        private async Task<bool> ReconnectStreamAsync(string slot, ICameraDevice cam, int port,
+            Action<ICameraReader> setReader, Action<string, bool, int, bool> setStreamState)
         {
-            var reader = new UsbUvcStreamReader(cam);
+            ICameraReader reader;
+            if (cam is UsbCameraDevice usbCam) reader = new UsbUvcStreamReader(usbCam);
+            else reader = new AndroidDeviceCameraReader((AndroidCameraDevice)cam);
+
             if (!await reader.StartAsync())
             {
                 return false;
@@ -668,9 +671,16 @@ namespace FacialCameraBroadcaster
         {
             try
             {
-                var ni = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
-                    .FirstOrDefault(n => n.NetworkInterfaceType != System.Net.NetworkInformation.NetworkInterfaceType.Loopback
-                        && n.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up);
+                var interfaces = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+                    .Where(n => n.NetworkInterfaceType != System.Net.NetworkInformation.NetworkInterfaceType.Loopback
+                        && n.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
+                    .ToList();
+                
+                // On Android/Quest, prioritize the actual Wi-Fi interface (usually wlan0)
+                // over virtual interfaces like p2p0 (Wi-Fi Direct) or tun0 (VPN).
+                var ni = interfaces.FirstOrDefault(n => n.Name.StartsWith("wlan", StringComparison.OrdinalIgnoreCase)) 
+                      ?? interfaces.FirstOrDefault(n => !n.Name.StartsWith("p2p", StringComparison.OrdinalIgnoreCase));
+                
                 if (ni == null) return "127.0.0.1";
                 var addr = ni.GetIPProperties().UnicastAddresses
                     .FirstOrDefault(u => u.Address.AddressFamily == AddressFamily.InterNetwork);
@@ -727,7 +737,7 @@ namespace FacialCameraBroadcaster
         private async void OnLeftEyePickerSelected(object sender, EventArgs e)
         {
             if (_ignoreLeftPickerChange) return;
-            if (LeftEyeCameraPicker.SelectedItem is not UsbCameraDevice cam) return;
+            if (LeftEyeCameraPicker.SelectedItem is not ICameraDevice cam) return;
             if (leftEyeReader != null && GetDeviceId(leftEyeReader.Camera) == GetDeviceId(cam)) return;
             if (leftEyeReader != null)
                 await StopCameraAsync("Left Eye", PortLeftEye, () => leftEyeReader, () => leftEyeServer, () => leftEyePushClient,
@@ -749,7 +759,7 @@ namespace FacialCameraBroadcaster
         private async void OnRightEyePickerSelected(object sender, EventArgs e)
         {
             if (_ignoreRightPickerChange) return;
-            if (RightEyeCameraPicker.SelectedItem is not UsbCameraDevice cam) return;
+            if (RightEyeCameraPicker.SelectedItem is not ICameraDevice cam) return;
             if (rightEyeReader != null && GetDeviceId(rightEyeReader.Camera) == GetDeviceId(cam)) return;
             if (rightEyeReader != null)
                 await StopCameraAsync("Right Eye", PortRightEye, () => rightEyeReader, () => rightEyeServer, () => rightEyePushClient,
@@ -771,7 +781,7 @@ namespace FacialCameraBroadcaster
         private async void OnMouthPickerSelected(object sender, EventArgs e)
         {
             if (_ignoreMouthPickerChange) return;
-            if (MouthCameraPicker.SelectedItem is not UsbCameraDevice cam) return;
+            if (MouthCameraPicker.SelectedItem is not ICameraDevice cam) return;
             if (mouthReader != null && GetDeviceId(mouthReader.Camera) == GetDeviceId(cam)) return;
             if (mouthReader != null)
                 await StopCameraAsync("Mouth", PortMouth, () => mouthReader, () => mouthServer, () => mouthPushClient,
@@ -791,15 +801,19 @@ namespace FacialCameraBroadcaster
             () => { mouthReader = null; mouthServer = null; mouthPushClient = null; _mouthLastFrame = null; }, SetStreamState);
 
         private async Task<bool> StartCameraAsync(string slot, Picker cameraPicker, int port, Func<byte[]?> getFrame,
-            Action<UsbUvcStreamReader> setReader, Action<MjpegStreamServer> setServer,
+            Action<ICameraReader> setReader, Action<MjpegStreamServer> setServer,
             Action<string, bool, int, bool> setStreamState, bool silentFail = false)
         {
-            if (cameraPicker.SelectedItem is not UsbCameraDevice cam)
+            if (cameraPicker.SelectedItem is not ICameraDevice cam)
             {
-                if (!silentFail) DisplayAlert("Error", $"Please select a USB camera for {slot}.", "OK");
+                if (!silentFail) DisplayAlert("Error", $"Please select a camera for {slot}.", "OK");
                 return false;
             }
-            var reader = new UsbUvcStreamReader(cam);
+            
+            ICameraReader reader;
+            if (cam is UsbCameraDevice usbCam) reader = new UsbUvcStreamReader(usbCam);
+            else reader = new AndroidDeviceCameraReader((AndroidCameraDevice)cam);
+
             if (!await reader.StartAsync())
             {
                 if (!silentFail)
@@ -848,8 +862,8 @@ namespace FacialCameraBroadcaster
             return true;
         }
 
-        private async Task StopCameraAsync(string slot, int port,
-            Func<UsbUvcStreamReader?> getReader, Func<MjpegStreamServer?> getServer, Func<MjpegPushClient?>? getPushClient,
+        private async Task StopCameraAsync(string slot, int port, Func<ICameraReader?> getReader,
+            Func<MjpegStreamServer?> getServer, Func<MjpegPushClient?> getPushClient,
             Action clearRefs, Action<string, bool, int, bool> setStreamState)
         {
             if (!IsClientMode())

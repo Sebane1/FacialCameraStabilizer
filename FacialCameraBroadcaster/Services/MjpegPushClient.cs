@@ -87,10 +87,11 @@ namespace FacialCameraBroadcaster.Services
                         byte[]? frame = null;
                         try { frame = _getLatestFrame(); } catch { }
 
-                        bool isNew = frame != null && frame.Length > 0 &&
+                        // Null or empty frames are ignored and never replace lastFrame.
+                        bool isNew = frame != null && frame.Length > 1024 &&
                             (lastFrame == null || frame.Length != lastFrame.Length || !frame.AsSpan().SequenceEqual(lastFrame));
 
-                        if (isNew && frame != null && frame.Length > 0)
+                        if (isNew && frame != null)
                         {
                             lastFrame = frame;
                             lastResendMs = Environment.TickCount64;

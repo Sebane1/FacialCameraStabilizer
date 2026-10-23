@@ -1,33 +1,17 @@
-﻿using AOApps.Dns;
-using System.Collections.Concurrent;
-using System.Net;
-using System.Text.Json;
+using Avalonia;
+using System;
+
+namespace FacialCameraStabilizer;
+
 class Program
 {
-    static List<CameraConfig> DefaultCameras = new List<CameraConfig>();
-    static async Task Main()
-    {
-        List<CameraConfig> cameras;
+    [STAThread]
+    public static void Main(string[] args) => BuildAvaloniaApp()
+        .StartWithClassicDesktopLifetime(args);
 
-        try
-        {
-            string json = File.ReadAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json"));
-            cameras = JsonSerializer.Deserialize<List<CameraConfig>>(json)
-                      ?? throw new Exception("Failed to deserialize camera config.");
-        }
-        catch (Exception ex)
-        {
-            cameras = DefaultCameras;
-        }
-
-        foreach (var cam in cameras)
-        {
-            var feed = new CameraFeed(cam);
-            _ = feed.StartAsync();
-        }
-
-        Console.WriteLine("Multi-camera proxy running...");
-        await Task.Delay(-1);
-    }
-
+    public static AppBuilder BuildAvaloniaApp()
+        => AppBuilder.Configure<App>()
+            .UsePlatformDetect()
+            .WithInterFont()
+            .LogToTrace();
 }

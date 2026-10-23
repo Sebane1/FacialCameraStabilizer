@@ -9,9 +9,10 @@ namespace FacialCameraBroadcaster.Platforms.Android
     /// <summary>
     /// Reads UVC payloads from a USB camera bulk IN endpoint and extracts JPEG frames (SOI FF D8 ... EOI FF D9).
     /// </summary>
-    public class UsbUvcStreamReader
+    public class UsbUvcStreamReader : ICameraReader
     {
         private const int BufferSize = 256 * 1024; // 256 KB per read
+
         private const int MaxFrameSize = 1024 * 1024;   // 1 MB max single frame
         private static readonly byte[] JpegSoi = { 0xFF, 0xD8 };
         private static readonly byte[] JpegEoi = { 0xFF, 0xD9 };
@@ -44,7 +45,7 @@ namespace FacialCameraBroadcaster.Platforms.Android
         public bool IsRunning => _running;
 
         /// <summary>The camera device this reader is using (for disconnect matching by VID/PID).</summary>
-        public UsbCameraDevice Camera => _camera;
+        public ICameraDevice Camera => _camera;
 
         public UsbUvcStreamReader(UsbCameraDevice camera)
         {
@@ -184,11 +185,13 @@ namespace FacialCameraBroadcaster.Platforms.Android
             if (endpoint == null) return;
 
             var conn = _connection;
-            var cam = _camera;
-            if (conn == null || cam == null) return;
+            var cam = (AndroidCameraDevice?)null; // cast just for type safety
+            if (conn == null) return;
 
             var accumulator = new List<byte>(MaxFrameSize);
+            var yuyvAccumulator = new List<byte>(MaxFrameSize);
             int frameStart = -1;
+            bool isMjpeg = false;
 
             try
             {
@@ -200,10 +203,29 @@ namespace FacialCameraBroadcaster.Platforms.Android
                     if (len <= 0)
                         continue;
 
+                    // Parse UVC Header (YUYV fallback)
+                    bool hasUvcHeader = (len >= 2 && _readBuffer[0] >= 2 && _readBuffer[0] <= 12 && (_readBuffer[1] & 0x80) != 0);
+                    if (!isMjpeg && hasUvcHeader)
+                    {
+                        int hle = _readBuffer[0];
+                        bool eof = (_readBuffer[1] & 0x02) != 0;
+                        for (int i = hle; i < len; i++)
+                            yuyvAccumulator.Add(_readBuffer[i]);
+
+                        if (eof)
+                        {
+                            if (yuyvAccumulator.Count > 100_000 && yuyvAccumulator.Count < MaxFrameSize)
+                            {
+                                ProcessYuyvFrame(yuyvAccumulator.ToArray());
+                            }
+                            yuyvAccumulator.Clear();
+                        }
+                    }
+
+                    // Existing MJPEG logic
                     for (int i = 0; i < len; i++)
                         accumulator.Add(_readBuffer[i]);
 
-                    // Keep buffer bounded: only from last SOI onward, or drop if too big
                     if (frameStart >= 0 && accumulator.Count - frameStart > MaxFrameSize)
                     {
                         accumulator.Clear();
@@ -216,7 +238,6 @@ namespace FacialCameraBroadcaster.Platforms.Android
                         continue;
                     }
 
-                    // Look for SOI if we're not inside a frame
                     if (frameStart < 0)
                     {
                         for (int i = 0; i + 2 <= accumulator.Count; i++)
@@ -229,21 +250,20 @@ namespace FacialCameraBroadcaster.Platforms.Android
                         }
                         if (frameStart < 0)
                         {
-                            // Keep only last byte (might be 0xFF) for next SOI
                             if (accumulator.Count > 1)
                                 accumulator.RemoveRange(0, accumulator.Count - 1);
                             continue;
                         }
                     }
 
-                    // Look for EOI after frameStart
                     for (int i = frameStart + 2; i + 2 <= accumulator.Count; i++)
                     {
                         if (accumulator[i] == JpegEoi[0] && accumulator[i + 1] == JpegEoi[1])
                         {
                             int frameLen = i + 2 - frameStart;
-                            if (frameLen > 0 && frameLen <= MaxFrameSize)
+                            if (frameLen > 1024 && frameLen <= MaxFrameSize)
                             {
+                                isMjpeg = true; // We found a valid JPEG!
                                 byte[] frame = new byte[frameLen];
                                 for (int j = 0; j < frameLen; j++)
                                     frame[j] = accumulator[frameStart + j];
@@ -269,8 +289,50 @@ namespace FacialCameraBroadcaster.Platforms.Android
             }
             finally
             {
-                TryReleaseConnection(conn, cam);
+                TryReleaseConnection(conn, _camera as UsbCameraDevice);
             }
+        }
+
+        private void ProcessYuyvFrame(byte[] yuyv)
+        {
+            try
+            {
+                // Guess resolution based on frame size (YUYV is 2 bytes per pixel)
+                int pixels = yuyv.Length / 2;
+                int width = 0, height = 0;
+                if (pixels == 640 * 480) { width = 640; height = 480; }
+                else if (pixels == 1280 * 720) { width = 1280; height = 720; }
+                else if (pixels == 1920 * 1080) { width = 1920; height = 1080; }
+                else if (pixels == 800 * 600) { width = 800; height = 600; }
+                else if (pixels == 320 * 240) { width = 320; height = 240; }
+                else return; // Unknown resolution
+
+                // Extract Y channel (every even byte)
+                byte[] nv21 = new byte[width * height + (width / 2) * (height / 2) * 2];
+                for (int i = 0; i < width * height; i++)
+                {
+                    nv21[i] = yuyv[i * 2];
+                }
+                for (int i = width * height; i < nv21.Length; i++)
+                {
+                    nv21[i] = 128; // neutral UV
+                }
+
+                using var yuvImage = new global::Android.Graphics.YuvImage(nv21, global::Android.Graphics.ImageFormatType.Nv21, width, height, null);
+                using var outStream = new System.IO.MemoryStream();
+                yuvImage.CompressToJpeg(new global::Android.Graphics.Rect(0, 0, width, height), 80, outStream);
+
+                byte[] jpegBytes = outStream.ToArray();
+                lock (_frameLock)
+                {
+                    if (_frameBuffer != null && jpegBytes.Length <= _frameBuffer.Length)
+                    {
+                        Array.Copy(jpegBytes, 0, _frameBuffer, 0, jpegBytes.Length);
+                        _frameLength = jpegBytes.Length;
+                    }
+                }
+            }
+            catch { }
         }
     }
 }

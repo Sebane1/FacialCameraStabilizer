@@ -1,0 +1,50 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:FacialCameraStabilizer"
+        x:Class="FacialCameraStabilizer.MainWindow"
+        x:DataType="local:MainWindow"
+        Title="Facial Camera Stabilizer Control Panel"
+        Width="800" Height="600"
+        WindowStartupLocation="CenterScreen">
+
+    <Grid RowDefinitions="Auto,*,Auto,200" Margin="10">
+        <!-- Header -->
+        <TextBlock Grid.Row="0" Text="Configured Cameras" FontSize="20" FontWeight="Bold" Margin="0,0,0,10"/>
+
+        <!-- Camera List -->
+        <DataGrid Grid.Row="1" Name="CameraGrid" AutoGenerateColumns="False" ItemsSource="{Binding Cameras}">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Name" Binding="{Binding Name, x:DataType=local:CameraConfig}" Width="180"/>
+                <DataGridCheckBoxColumn Header="Is Server" Binding="{Binding IsServer, x:DataType=local:CameraConfig}" Width="100"/>
+                <DataGridTemplateColumn Header="Source URL" Width="*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="local:CameraConfig">
+                            <TextBox Text="{Binding DisplayUrl}" IsReadOnly="{Binding !IsUrlEditable}" Background="Transparent" BorderThickness="0" VerticalAlignment="Center" Margin="5,0"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Ingest Port" Width="120">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="local:CameraConfig">
+                            <TextBox Text="{Binding DisplayIngestPort}" IsReadOnly="{Binding !IsIngestPortEditable}" Background="Transparent" BorderThickness="0" VerticalAlignment="Center" Margin="5,0"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Proxy Port" Binding="{Binding Port, x:DataType=local:CameraConfig}" Width="120"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Controls -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10" Margin="0,10,0,10">
+            <Button Name="AddButton" Content="Add Camera" Click="AddButton_Click"/>
+            <Button Name="RemoveButton" Content="Remove Selected" Click="RemoveButton_Click"/>
+            <Button Name="SaveButton" Content="Save Config" Click="SaveButton_Click"/>
+        </StackPanel>
+
+        <!-- Log Output -->
+        <Grid Grid.Row="3" RowDefinitions="Auto,*">
+            <TextBlock Grid.Row="0" Text="Server Logs:" FontWeight="SemiBold" Margin="0,0,0,5"/>
+            <TextBox Grid.Row="1" Name="LogTextBox" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" ScrollViewer.VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/>
+        </Grid>
+    </Grid>
+</Window>
